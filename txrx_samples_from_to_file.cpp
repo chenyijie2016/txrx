@@ -1,3 +1,8 @@
+#if __cplusplus < 202302L
+#error "should use C++23 implmentation"
+#endif
+
+
 #include <uhd/types/tune_request.hpp>
 #include <uhd/usrp/multi_usrp.hpp>
 #include <uhd/utils/safe_main.hpp>
@@ -23,22 +28,24 @@
 #include <algorithm>
 #include <future>
 #include <iomanip>
+#include <ranges>
 #include "workers.h"
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
 
-namespace {
+using namespace std::chrono_literals;
+using std::ranges::all_of;
+using std::ranges::any_of;
+using std::ranges::transform;
+using std::ranges::adjacent_find;
+using std::views::enumerate;
+using std::views::zip;
+using std::vector;
+using std::string;
+using std::complex;
+using std::format;
 
-    using std::ranges::all_of;
-    using std::ranges::any_of;
-    using std::ranges::transform;
-    using std::ranges::adjacent_find;
-    using std::vector;
-    using std::string;
-    using std::complex;
-
-}
 
 // Complex floating-point type for samples (fc32 format)
 using complex_t = std::complex<float>;
@@ -67,7 +74,7 @@ void sig_int_handler(int) {
  * @throws std::runtime_error if timeout occurs while waiting for lock
  */
 bool check_locked_sensor(
-    std::vector<std::string> sensor_names,
+    vector<string> sensor_names,
     const char *sensor_name,
     std::function<uhd::sensor_value_t(const std::string &)> get_sensor_fn,
     double setup_time = 1.0) {
@@ -78,7 +85,7 @@ bool check_locked_sensor(
         return false;
     }
 
-    const auto setup_timeout = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    const auto setup_timeout = std::chrono::steady_clock::now() + 1s;
     bool lock_detected = false;
 
     UHD_LOG_INFO("SENSOR", "Waiting for sensor \"" << sensor_name << "\" lock: ")
@@ -101,7 +108,7 @@ bool check_locked_sensor(
             }
             UHD_LOG_TRACE("SENSOR", "Waiting for lock on \"" << sensor_name << "\"")
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(100ms);
     }
 
     return true;
@@ -113,10 +120,11 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     std::string tx_ant, rx_ant, ref;
     std::string tx_channels_str, rx_channels_str;
     std::vector<size_t> tx_channels, rx_channels;
-    size_t spb;                    // Samples per buffer
-    double rate, freq, tx_gain, rx_gain, bw, delay;
-    size_t nsamps = 0;             // Number of samples to receive, 0 means until TX complete
+    size_t spb; // Samples per buffer
+    double rate, tx_gain, rx_gain, bw, delay, freq;
+    size_t nsamps = 0; // Number of samples to receive, 0 means until TX complete
     std::vector<std::string> tx_files, rx_files;
+    vector<double> tx_freqs, rx_freqs;
 
     // Program description
     const std::string program_doc =
@@ -150,8 +158,12 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
              "Samples per buffer")
             ("rate", po::value<double>(&rate)->default_value(5e6),
              "Sample rate (Hz)")
-            ("freq", po::value<double>(&freq)->default_value(915e6),
-             "Center frequency (Hz)")
+            ("freq", po::value<double>(&freq),
+             "Center frequency (Hz) for ALL Tx and Rx CHANNELS. IGNORE --tx-freqs and --rx-freqs settings")
+            ("tx-freqs", po::value<vector<double> >(&tx_freqs)->multitoken()->default_value({915e6}, "915e6"),
+             "TX Center frequencies (Hz)")
+            ("rx-freqs", po::value<vector<double> >(&rx_freqs)->multitoken()->default_value({915e6}, "915e6"),
+             "RX Center frequencies (Hz)")
             ("tx-gain", po::value<double>(&tx_gain)->default_value(10.0),
              "TX gain (dB)")
             ("rx-gain", po::value<double>(&rx_gain)->default_value(10.0),
@@ -181,7 +193,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
         std::cerr << desc << std::endl;
         return EXIT_FAILURE;
     }
-
+    // UHD_LOG_INFO("MAIN", "" << __cplusplus)
     // Register signal handler for graceful shutdown
     UHD_LOG_TRACE("SYSTEM", "Registering signal handler")
     std::signal(SIGINT, &sig_int_handler);
@@ -210,8 +222,24 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
         UHD_LOG_INFO("CONFIG", oss.str());
     }
 
+    if (any_of(tx_channels, [&](const auto &ch) {
+        return ch >= total_tx_channels;
+    })) {
+        UHD_LOG_ERROR("CONFIG", "TX channels are not supported");
+        return EXIT_FAILURE;
+    }
+
+    if (any_of(rx_channels, [&](const auto &ch) {
+        return ch >= total_rx_channels;
+    })) {
+        UHD_LOG_ERROR("CONFIG", "RX channels are not supported");
+        return EXIT_FAILURE;
+    }
+
+
     UHD_ASSERT_THROW(total_tx_channels >= tx_files.size())
     UHD_ASSERT_THROW(total_rx_channels >= rx_files.size())
+
 
     // Verify TX input files exist
     if (not all_of(tx_files, [](const std::string &filename) {
@@ -224,7 +252,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     // Verify all TX files have the same size
     std::vector<std::uintmax_t> sizes;
     transform(tx_files, std::back_inserter(sizes),
-                           [](const std::string &f) { return std::filesystem::file_size(f); });
+              [](const std::string &f) { return fs::file_size(f); });
 
     if (adjacent_find(sizes, std::not_equal_to{}) != sizes.end()) {
         UHD_LOG_ERROR("PRE-CHECK", "TX file sizes mismatch")
@@ -234,12 +262,6 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     // Configure TX channels
     UHD_LOG_TRACE("CONFIG", "Configuring TX channels")
     for (size_t ch: tx_channels) {
-        if (ch >= total_tx_channels) {
-            UHD_LOG_ERROR("CONFIG", "Invalid TX channel: " << ch <<
-                         " (total TX channels: " << total_tx_channels << ")")
-            throw std::runtime_error("Invalid TX channel: " + std::to_string(ch) +
-                                     " (total TX channels: " + std::to_string(total_tx_channels) + ")");
-        }
         // Set TX gain
         if (vm.count("tx-gain")) {
             UHD_LOG_INFO("CONFIG", std::format("Setting TX gain to: {:.2f} dB", tx_gain))
@@ -248,12 +270,9 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
         }
 
 
-        uhd::tune_request_t tune_request(freq);
-        usrp->set_tx_freq(tune_request, ch);
-
         UHD_LOG_INFO("CONFIG", std::format("Actual TX frequency: {:.3f} MHz", usrp->get_tx_freq(ch) / 1e6))
 
-        if (not tx_ant.empty()) {
+        if (!tx_ant.empty()) {
             usrp->set_tx_antenna(tx_ant, ch);
             UHD_LOG_INFO("CONFIG", std::format("TX antenna: {}", usrp->get_tx_antenna(ch)));
         }
@@ -262,12 +281,6 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     // Configure RX channels
     UHD_LOG_TRACE("CONFIG", "Configuring RX channels")
     for (size_t ch: rx_channels) {
-        if (ch >= total_rx_channels) {
-            UHD_LOG_ERROR("CONFIG", "Invalid RX channel: " << ch <<
-                         " (total RX channels: " << total_rx_channels << ")")
-            throw std::runtime_error("Invalid RX channel: " + std::to_string(ch) +
-                                     " (total RX channels: " + std::to_string(total_rx_channels) + ")");
-        }
         if (vm.count("rx-gain")) {
             UHD_LOG_INFO("CONFIG", std::format("Setting RX gain to: {:.1f} dB",rx_gain))
             usrp->set_rx_gain(rx_gain, ch);
@@ -275,8 +288,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
             UHD_LOG_INFO("CONFIG", std::format("Actual RX gain: {:.1f} dB", usrp->get_rx_gain(ch)))
         }
 
-        uhd::tune_request_t tune_request(freq);
-        usrp->set_rx_freq(tune_request, ch);
+        // uhd::tune_request_t tune_request(freq);
+        // usrp->set_rx_freq(tune_request, ch);
         UHD_LOG_INFO("CONFIG", std::format("Actual RX frequency: {:.3f} MHz", usrp->get_rx_freq(ch) / 1e6))
 
         if (!rx_ant.empty()) {
@@ -303,7 +316,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
 
     const uhd::time_spec_t last_pps_time = usrp->get_time_last_pps();
     while (last_pps_time == usrp->get_time_last_pps()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(100ms);
     }
     // This command will be processed fairly soon after the last PPS edge:
     usrp->set_time_next_pps(uhd::time_spec_t(0.0));
@@ -311,12 +324,37 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     // Display current USRP time
     UHD_LOG_INFO("CONFIG", std::format("Current USRP time: {:.6f} seconds", usrp->get_time_now().get_real_secs()));
 
+
+    UHD_ASSERT_THROW(tx_freqs.size() >= tx_channels.size())
+    UHD_ASSERT_THROW(rx_freqs.size() >= rx_channels.size())
+    // Sync tx and tx
+    UHD_LOG_INFO("CONFIG", "Start Sync tune Request for TX and RX")
+    usrp->set_command_time(uhd::time_spec_t(0.5),
+                           uhd::usrp::multi_usrp::ALL_MBOARDS);
+    for (const auto &[ch, freq]: zip(tx_channels, tx_freqs)) {
+        usrp->set_tx_freq(freq, ch);
+    }
+    for (const auto &[ch, freq]: zip(rx_channels, rx_freqs)) {
+        usrp->set_rx_freq(freq, ch);
+    }
+
+    usrp->clear_command_time(uhd::usrp::multi_usrp::ALL_MBOARDS);
+
+    for (auto ch: tx_channels) {
+        UHD_LOG_INFO("CONFIG", std::format("TX channel {} freq set to {:.3f} MHz", ch, usrp->get_tx_freq(ch)/1e6));
+    }
+    for (auto ch: rx_channels) {
+        UHD_LOG_INFO("CONFIG", std::format("RX channel {} freq set to {:.3f} MHz", ch, usrp->get_rx_freq(ch)/1e6));
+    }
+
+
     // Set sample rate
     UHD_LOG_INFO("CONFIG", std::format("Setting sample rate to: {:.3f} Msps", rate/1e6));
     usrp->set_tx_rate(rate, uhd::usrp::multi_usrp::ALL_CHANS);
     usrp->set_rx_rate(rate, uhd::usrp::multi_usrp::ALL_CHANS);
     UHD_LOG_INFO("CONFIG", std::format("Actual TX sample rate: {:.3f} Msps", usrp->get_tx_rate()/1e6));
     UHD_LOG_INFO("CONFIG", std::format("Actual RX sample rate: {:.3f} Msps", usrp->get_rx_rate()/1e6));
+
 
     // Bandwidth settings are optional
     // if (vm.count("bw")) {
@@ -327,7 +365,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     //     UHD_LOG_INFO("CONFIG", std::format("Actual RX bandwidth: {:.3f} MHz", usrp->get_rx_bandwidth()/1e6));
     // }
 
-    // Configure antenna settings
+    // Configure Freqs
 
 
     // Check LO lock status
@@ -359,18 +397,6 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
         }
     }
 
-    // Check reference clock lock
-    // if (ref == "external" || ref == "gpsdo") {
-    //     auto mboard_sensors = usrp->get_mboard_sensor_names(0);
-    //     if (check_locked_sensor(
-    //         mboard_sensors,
-    //         "ref_locked",
-    //         [usrp](const std::string& sensor_name) {
-    //             return usrp->get_mboard_sensor(sensor_name);
-    //         })) {
-    //         UHD_LOG_INFO("SYSTEM", "Reference clock is locked");
-    //     }
-    // }
 
     // Create TX stream
     UHD_LOG_TRACE("STREAM", "Creating TX stream");
@@ -386,7 +412,10 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
 
     // Calculate start time
     uhd::time_spec_t seconds_in_future = usrp->get_time_now() + uhd::time_spec_t(delay);
-    UHD_LOG_INFO("SYSTEM", std::format("Start time: {:.3f} seconds in the future (absolute time: {:.6f})", delay, seconds_in_future.get_real_secs()));
+    UHD_LOG_INFO(
+        "SYSTEM",
+        std::format("Start time: {:.3f} seconds in the future (absolute time: {:.6f})", delay, seconds_in_future.
+            get_real_secs()));
 
 
     // Start transmission thread

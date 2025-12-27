@@ -98,7 +98,8 @@ void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const std::vect
         size_t samps_sent = tx_stream->send(
             offset_ptrs,
             samps_to_send,
-            md
+            md,
+            timeout
         );
 
         if (samps_sent == 0) {
@@ -108,6 +109,7 @@ void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const std::vect
         num_samps_transmitted += samps_sent;
         buf_sent_samps += samps_sent;
         first_packet = false;
+        timeout = 0.1;
 
         /* ---------- End of file and buffer completely sent ---------- */
         if (eof && buf_sent_samps == buf_valid_samps) {
