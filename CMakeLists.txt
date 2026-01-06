@@ -40,7 +40,7 @@ set(UHD_BOOST_REQUIRED_COMPONENTS
 include(UHDBoost)
 
 ### Make the executable #######################################################
-add_executable(txrx_samples_from_to_file txrx_samples_from_to_file.cpp
+add_executable(txrx_sync txrx_samples_from_to_file.cpp
         workers.cpp
         workers.h)
 
@@ -56,12 +56,12 @@ message(STATUS "****************************************************************
 # anything else we need (in this case, some Boost libraries):
 if(NOT UHD_USE_STATIC_LIBS)
     message(STATUS "Linking against shared UHD library.")
-    target_link_libraries(txrx_samples_from_to_file  PUBLIC uhd Boost::program_options)
+    target_link_libraries(txrx_sync  PUBLIC uhd Boost::program_options)
     # Shared library case: All we need to do is link against the library, and
     # anything else we need (in this case, some Boost libraries):
 else(NOT UHD_USE_STATIC_LIBS)
     message(STATUS "Linking against static UHD library.")
-    target_link_libraries(txrx_samples_from_to_file
+    target_link_libraries(txrx_sync
             # We could use ${UHD_LIBRARIES}, but linking requires some extra flags,
             # so we use this convenience variable provided to us
             ${UHD_STATIC_LIB_LINK_FLAG}
@@ -69,7 +69,7 @@ else(NOT UHD_USE_STATIC_LIBS)
             # UHD as well, because the dependencies don't get resolved automatically
             ${UHD_STATIC_LIB_DEPS}
     )
-    target_include_directories(txrx_samples_from_to_file  PUBLIC ${UHD_INCLUDE_DIRS})
+    target_include_directories(txrx_sync  PUBLIC ${UHD_INCLUDE_DIRS})
 endif(NOT UHD_USE_STATIC_LIBS)
 
 ### Once it's built... ########################################################
