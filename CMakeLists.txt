@@ -40,7 +40,7 @@ set(UHD_BOOST_REQUIRED_COMPONENTS
 include(UHDBoost)
 
 ### Make the executable #######################################################
-add_executable(txrx_sync txrx_samples_from_to_file.cpp
+add_executable(txrx_sync txrx_sync.cpp
         workers.cpp
         workers.h)
 

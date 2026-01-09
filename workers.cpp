@@ -2,6 +2,14 @@
 #include <complex>
 #include <fstream>
 #include <format>
+#include <ranges>
+
+namespace stdv = std::views;
+namespace stdr = std::ranges;
+
+using std::vector;
+using std::string;
+using std::format;
 
 // Global flag for signal handling
 std::atomic<bool> stop_signal_called(false);
@@ -18,7 +26,7 @@ std::atomic<bool> stop_signal_called(false);
  * @param spb Samples per buffer - number of samples to process in each iteration
  * @param start_time Time specification for when transmission should begin
  */
-void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const std::vector<std::string> &filenames, size_t spb,
+void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const vector<string> &filenames, size_t spb,
                                const uhd::time_spec_t &start_time) {
     // Initialize TX metadata
     uhd::tx_metadata_t md;
@@ -30,50 +38,56 @@ void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const std::vect
     bool first_packet = true;
 
     // Create buffers for each channel
-    std::vector<std::vector<complexf> > buffs(tx_stream->get_num_channels(), std::vector<complexf>(spb));
-    std::vector<complexf *> buff_ptrs;
+    vector<std::vector<complexf> > buffs(tx_stream->get_num_channels(), std::vector<complexf>(spb));
+    vector<complexf *> buff_ptrs;
     for (auto &buff: buffs) {
         buff_ptrs.push_back(&buff.front());
     }
 
     // Open input files
-    std::vector<std::shared_ptr<std::ifstream> > infiles;
-    std::ranges::transform(filenames, std::back_inserter(infiles), [&](const std::string &f) {
-        return std::make_shared<std::ifstream>(f, std::ios::binary);
-    });
+    vector<std::shared_ptr<std::ifstream> > infiles = filenames
+    | stdv::transform([](const string &file) {
+        return std::make_shared<std::ifstream>(file, std::ios::binary);
+    })
+    | stdr::to<vector>();
+    // std::ranges::transform(filenames, std::back_inserter(infiles), [&](const std::string &f) {
+    //     return std::make_shared<std::ifstream>(f, std::ios::binary);
+    // });
     size_t num_samps_transmitted = 0;
     bool eof = false;
 
     // Track buffer state
-    size_t buf_valid_samps = 0;   // Number of valid samples in buffer
-    size_t buf_sent_samps  = 0;   // Number of samples already sent from buffer
+    size_t buf_valid_samps = 0; // Number of valid samples in buffer
+    size_t buf_sent_samps = 0; // Number of samples already sent from buffer
 
-    UHD_LOG_INFO("TX-STREAM", "Starting transmission from " << filenames.size() << " file(s)")
+    UHD_LOG_INFO("TX-STREAM", format("Starting transmission from {} file(s)",filenames.size()))
+    for (const auto &file: filenames) {
+        UHD_LOG_INFO("TX-STREAM", format("{}", file))
+    }
+
 
     while (!stop_signal_called) {
-
         /* ---------- Read from files when buffer is empty ---------- */
         if (buf_sent_samps == buf_valid_samps && !eof) {
-
-            buf_sent_samps  = 0;
+            buf_sent_samps = 0;
             buf_valid_samps = 0;
             eof = false;
 
             // Read samples from all files simultaneously
             for (size_t ch = 0; ch < tx_stream->get_num_channels(); ++ch) {
                 infiles[ch]->read(
-                    reinterpret_cast<char*>(buffs[ch].data()),
+                    reinterpret_cast<char *>(buffs[ch].data()),
                     spb * sizeof(complexf)
                 );
                 size_t read_samps =
-                    infiles[ch]->gcount() / sizeof(complexf);
+                        infiles[ch]->gcount() / sizeof(complexf);
 
                 if (ch == 0) {
                     buf_valid_samps = read_samps;
                 } else {
                     // Take minimum across all channels to ensure synchronized data
                     buf_valid_samps =
-                        std::min(buf_valid_samps, read_samps);
+                            std::min(buf_valid_samps, read_samps);
                 }
             }
 
@@ -90,7 +104,7 @@ void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const std::vect
         /* ---------- Send remaining samples ---------- */
         size_t samps_to_send = buf_valid_samps - buf_sent_samps;
 
-        std::vector<complexf*> offset_ptrs(tx_stream->get_num_channels());
+        std::vector<complexf *> offset_ptrs(tx_stream->get_num_channels());
         for (size_t ch = 0; ch < tx_stream->get_num_channels(); ++ch) {
             offset_ptrs[ch] = buffs[ch].data() + buf_sent_samps;
         }

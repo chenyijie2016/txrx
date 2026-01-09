@@ -1,8 +1,3 @@
-#if __cplusplus < 202302L
-#error "should use C++23 implmentation"
-#endif
-
-
 #include <uhd/types/tune_request.hpp>
 #include <uhd/usrp/multi_usrp.hpp>
 #include <uhd/utils/safe_main.hpp>
@@ -31,6 +26,8 @@
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
+namespace stdr = std::ranges;
+namespace stdv = std::views;
 
 using namespace std::chrono_literals;
 using std::ranges::all_of;
@@ -133,7 +130,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     try {
         po::store(po::parse_command_line(argc, argv, desc), vm);
 
-        if (vm.count("help")) {
+        if (vm.contains("help")) {
             UHD_LOG_INFO("MAIN", program_doc)
             std::cout << desc << std::endl;
             return EXIT_SUCCESS;
@@ -145,17 +142,17 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
         std::cerr << desc << std::endl;
         return EXIT_FAILURE;
     }
-    // UHD_LOG_INFO("MAIN", "" << __cplusplus)
+
     // Register signal handler for graceful shutdown
     UHD_LOG_TRACE("SYSTEM", "Registering signal handler")
     std::signal(SIGINT, &sig_int_handler);
 
 
     // Create USRP device
-    UHD_LOG_INFO("SYSTEM", "Creating USRP device with args: " << args)
+    UHD_LOG_INFO("SYSTEM", format("Creating USRP device with args: {}", args));
     uhd::usrp::multi_usrp::sptr usrp = uhd::usrp::multi_usrp::make(args);
     // Display device information
-    UHD_LOG_INFO("SYSTEM", "USRP device info: " << usrp->get_pp_string());
+    UHD_LOG_INFO("SYSTEM", format("USRP device info: {}", usrp->get_pp_string()));
 
     if (vm.contains("rate")) {
         rx_rate = rate;
@@ -167,6 +164,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     // Check channel validity
     size_t total_tx_channels = usrp->get_tx_num_channels();
     size_t total_rx_channels = usrp->get_rx_num_channels();
+
     {
         std::ostringstream oss;
         oss << "TX channels: ";
@@ -209,24 +207,24 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     }
 
     // Verify all TX files have the same size
-    // vector<std::uintmax_t> sizes = tx_files
-    // | std::views::transform([](const std::string& f) {
-    //       return fs::file_size(f);
-    //   })
-    // | std::ranges::to<std::vector<std::uintmax_t>>();
+    vector<std::uintmax_t> sizes = tx_files
+    | stdv::transform([](const string& f) {
+          return fs::file_size(f);
+      })
+    | stdr::to<vector>();
 
-    vector<std::uintmax_t> sizes;
-    transform(tx_files, std::back_inserter(sizes),
-              [](const string &f) { return fs::file_size(f); });
+    // vector<std::uintmax_t> sizes;
+    // transform(tx_files, std::back_inserter(sizes),
+    //           [](const string &f) { return fs::file_size(f); });
 
 
     if (adjacent_find(sizes, std::not_equal_to{}) != sizes.end()) {
-        UHD_LOG_ERROR("PRE-CHECK", "TX file sizes mismatch")
+        UHD_LOG_ERROR("PRE-CHECK", "Tx file sizes mismatch")
         return EXIT_FAILURE;
     }
 
     // Configure TX channels
-    UHD_LOG_TRACE("CONFIG", "Configuring TX channels")
+    UHD_LOG_TRACE("CONFIG", "Configuring Tx channels")
     for (size_t ch: tx_channels) {
         // Set TX gain
         if (vm.contains("tx-gain")) {
@@ -244,10 +242,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
             UHD_LOG_INFO("CONFIG", format("Setting Tx(ch={}) bandwidth={:.3f} MHz",ch,tx_bw/1e6))
             usrp->set_tx_bandwidth(tx_bw, ch);
         }
-        UHD_LOG_INFO("CONFIG", format("TX(ch={}) bandwidth={:.3f} MHz", ch, usrp->get_tx_bandwidth(ch)/1e6))
+        UHD_LOG_INFO("CONFIG", format("Tx(ch={}) bandwidth={:.3f} MHz", ch, usrp->get_tx_bandwidth(ch)/1e6))
 
-        // usrp->set_tx_dc_offset()
-        // usrp->set_tx_iq_balance()
     }
 
     // Configure RX channels
@@ -305,13 +301,19 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     usrp->set_command_time(uhd::time_spec_t(0.5),
                            uhd::usrp::multi_usrp::ALL_MBOARDS);
     for (const auto &[ch, freq_]: zip(tx_channels, tx_freqs)) {
-        usrp->set_tx_freq(freq_, ch);
+        uhd::tune_request_t tune_req(freq_);
+        tune_req.args = uhd::device_addr_t("mode_n=integer");
+        usrp->set_tx_freq(tune_req, ch);
     }
     for (const auto &[ch, freq_]: zip(rx_channels, rx_freqs)) {
-        usrp->set_rx_freq(freq_, ch);
+        uhd::tune_request_t tune_req(freq_);
+        tune_req.args = uhd::device_addr_t("mode_n=integer");
+        usrp->set_rx_freq(tune_req, ch);
     }
 
     usrp->clear_command_time(uhd::usrp::multi_usrp::ALL_MBOARDS);
+
+    std::this_thread::sleep_for(500ms);
 
     for (auto ch: tx_channels) {
         UHD_LOG_INFO("CONFIG", std::format("Tx channel {} freq set to {:.3f} MHz", ch, usrp->get_tx_freq(ch)/1e6));
@@ -355,7 +357,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     UHD_LOG_INFO("SYSTEM", "Checking REF lock status...");
     size_t num_mboards = usrp->get_num_mboards();
     if (ref == "external") {
-        for (int mboard: std::views::iota(static_cast<size_t>(0), num_mboards)) {
+        for (auto mboard: std::views::iota(static_cast<size_t>(0), num_mboards)) {
             if (auto sensor_names = usrp->get_mboard_sensor_names(mboard);
                 std::ranges::find(sensor_names, "ref_locked") != sensor_names.end()) {
                 auto ref_locked = usrp->get_mboard_sensor("ref_locked", mboard);
@@ -365,7 +367,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
         }
     }
     if (ref == "mimo") {
-        for (int mboard: std::views::iota(static_cast<size_t>(0), num_mboards)) {
+        for (auto mboard: std::views::iota(static_cast<size_t>(0), num_mboards)) {
             if (auto sensor_names = usrp->get_mboard_sensor_names(mboard);
                 std::ranges::find(sensor_names, "mimo_locked") != sensor_names.end()) {
                 auto ref_locked = usrp->get_mboard_sensor("mimo_locked", mboard);
