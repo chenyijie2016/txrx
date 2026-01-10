@@ -1,8 +1,8 @@
-# UHD Test Project - TX/RX Samples From/To File
+# UHD Test Project - SDR Application for USRP Devices
 
 ## Overview
 
-This project provides a Software Defined Radio (SDR) application that simultaneously transmits and receives samples using USRP hardware through the UHD (USRP Hardware Driver) library. The application reads complex floating-point (fc32) samples from files for transmission and saves received samples to files.
+This project implements a Software Defined Radio (SDR) application that enables simultaneous transmission and reception of samples using USRP hardware through the UHD (USRP Hardware Driver) library. The application reads complex floating-point (fc32) samples from files for transmission and saves received samples to files in synchronized operations with configurable parameters for frequency, gain, sample rate, and channel selection.
 
 ## Features
 
@@ -13,30 +13,24 @@ This project provides a Software Defined Radio (SDR) application that simultaneo
 - Real-time LO lock checking
 - Clock synchronization with PPS
 - Reference clock support (internal, external, GPSDO)
+- Thread-safe worker implementations for file I/O and streaming
+- Graceful shutdown handling with signal processing
 
-## Components
+## Project Structure
 
-### Core Files
+### Core Components
 
-- `txrx_samples_from_to_file.cpp` - Main application implementing the TX/RX functionality
-- `workers.cpp` / `workers.h` - Worker threads for file I/O and streaming
-- `show_receive.py` - GNU Radio Companion flowgraph for visualizing received samples
+- `txrx_sync.cpp` - Main application implementing simultaneous TX/RX functionality with file I/O
+- `workers.cpp` / `workers.h` - Worker threads for file I/O and streaming operations
 - `net.sh` - System network buffer configuration script
 - `CMakeLists.txt` - Build configuration
-
-### Key Functions
-
-- **transmit_from_file_worker**: Handles transmission from file to USRP
-- **receive_to_file_worker**: Handles reception from USRP to file
-- **check_locked_sensor**: Monitors LO lock status
-- **Signal handlers**: Handle graceful shutdown via Ctrl+C
 
 ## Dependencies
 
 - UHD (USRP Hardware Driver) 4.9.0 or later
-- Boost libraries (program_options, filesystem)
-- C++20 compiler
-- USRP hardware device
+- Boost libraries (program_options, thread, system)
+- C++17 compiler or later
+- USRP hardware device (e.g., X310, B210)
 
 ## Building
 
@@ -47,51 +41,64 @@ cmake ..
 make
 ```
 
+Or using the cmake-build-debug directory:
+
+```bash
+cd cmake-build-debug
+cmake ..
+make
+```
+
 ## Usage
 
 ### Basic Command
 
 ```bash
-./txrx_samples_from_to_file --tx-files tx_data_fc32.bin --rx-files rx_data_fc32.bin --freq 915e6 --rate 5e6
+./txrx_sync --tx-files tx_data.fc32 --rx-files rx_data.fc32 --freq 915e6 --rate 5e6
 ```
 
 ### Command Line Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--help, -h` | Display help information | N/A |
-| `--args` | USRP device arguments | `addr=192.168.180.2` |
-| `--tx-files` | Transmit data files (fc32 format) | `tx_data_fc32.bin` |
-| `--rx-files` | Receive data files (fc32 format) | `rx_data_fc32.bin` |
-| `--tx-ant` | Transmit antenna selection | `TX/RX` |
-| `--rx-ant` | Receive antenna selection | `RX2` |
-| `--tx-channels` | Transmit channels (space separated) | `0` |
-| `--rx-channels` | Receive channels (space separated) | `1` |
-| `--spb` | Sample buffer size per packet | `2500` |
-| `--rate` | Sample rate (Hz) | `5e6` |
-| `--freq` | Center frequency (Hz) | `915e6` |
-| `--tx-gain` | Transmit gain (dB) | `10.0` |
-| `--rx-gain` | Receive gain (dB) | `10.0` |
-| `--bw` | Bandwidth (Hz) | N/A |
-| `--delay` | Start delay before transmission (seconds) | `1` |
-| `--nsamps` | Number of samples to receive (0 = until TX complete) | `0` |
-| `--ref` | Clock reference (internal/external/gpsdo) | `internal` |
+| `--help, -h` | Show this help message | N/A |
+| `--args` | USRP device address string | `"addr=192.168.180.2"` |
+| `--tx-files` | TX data files (fc32 format) | `"tx_data_fc32.bin"` |
+| `--rx-files` | RX data files (fc32 format) | `"rx_data_fc32.bin"` |
+| `--tx-ant` | TX antenna selection | `"TX/RX"` |
+| `--rx-ant` | RX antenna selection | `"RX2"` |
+| `--tx-channels` | TX channels (space separated) | `0` |
+| `--rx-channels` | RX channels (space separated) | `1` |
+| `--spb` | Samples per buffer | `2500` |
+| `--rate` | Sample rate (Hz) | N/A (requires --tx-rate and --rx-rate if not set) |
+| `--tx-rate` | Tx Sample rate (Hz) | `5e6` |
+| `--rx-rate` | Rx Sample rate (Hz) | `5e6` |
+| `--freq` | Center frequency (Hz) for ALL Tx and Rx CHANNELS. IGNORE --tx-freqs and --rx-freqs settings | N/A |
+| `--tx-freqs` | TX Center frequencies (Hz) | `915e6` |
+| `--rx-freqs` | RX Center frequencies (Hz) | `915e6` |
+| `--tx-gain` | TX gain (dB) | `10.0` |
+| `--rx-gain` | RX gain (dB) | `10.0` |
+| `--rx-bw` | RX Bandwidth (Hz) | N/A |
+| `--tx-bw` | TX Bandwidth (Hz) | N/A |
+| `--delay` | Delay before start (seconds) | `1` |
+| `--nsamps` | Number of samples to receive, 0 means until TX complete | `0` |
+| `--ref` | Reference: internal, external, gpsdo | `"internal"` |
 
 ### Example Usage
 
-#### Basic TX/RX
+#### Basic TX/RX with Files
 ```bash
-./txrx_samples_from_to_file --tx-files input.fc32 --rx-files output.fc32
+./txrx_sync --tx-files tx_data.fc32 --rx-files rx_data.fc32 --freq 915e6 --rate 5e6
 ```
 
 #### Multiple Channels
 ```bash
-./txrx_samples_from_to_file --tx-channels 0 1 --rx-channels 0 1 --tx-files tx0.fc32 tx1.fc32 --rx-files rx0.fc32 rx1.fc32
+./txrx_sync --tx-channels 0 1 --rx-channels 0 1 --tx-files tx0.fc32 tx1.fc32 --rx-files rx0.fc32 rx1.fc32
 ```
 
 #### Custom Parameters
 ```bash
-./txrx_samples_from_to_file --freq 2.4e9 --rate 10e6 --tx-gain 20 --rx-gain 15 --tx-files custom_input.fc32 --rx-files custom_output.fc32
+./txrx_sync --args "addr=192.168.10.2" --tx-freqs 2.4e9 2.5e9 --rx-freqs 2.4e9 2.5e9 --tx-gain 20 --rx-gain 15 --rate 10e6 --tx-files tx1.fc32 tx2.fc32 --rx-files rx1.fc32 rx2.fc32
 ```
 
 ## File Formats
@@ -100,25 +107,17 @@ The application uses complex floating-point (fc32) format for input and output f
 
 ## Network Configuration
 
-For optimal performance, run the network buffer configuration script before starting:
+For optimal network performance with USRP devices, run the network buffer configuration script before starting:
 
 ```bash
 sudo ./net.sh
 ```
 
-This increases the network buffer sizes to 32MB for both transmit and receive.
-
-## Visualization
-
-The `show_receive.py` script provides a GNU Radio flowgraph to visualize the received samples. You can view the received data using:
-
-```bash
-python3 show_receive.py
-```
+This script increases the network buffer sizes to improve data throughput between the host computer and USRP device.
 
 ## Workflow
 
-1. Prepare fc32 format input files
+1. Prepare fc32 format input files for transmission
 2. Configure network buffers with `net.sh`
 3. Run the application with appropriate parameters
 4. Monitor LO lock status and system information
@@ -126,20 +125,28 @@ python3 show_receive.py
 
 ## Signal Handling
 
-The application handles SIGINT (Ctrl+C) for graceful shutdown. During execution, press Ctrl+C to stop the process safely.
+The application handles SIGINT (Ctrl+C) for graceful shutdown. During execution, press Ctrl+C to stop the process safely, which will properly clean up resources and terminate worker threads.
 
 ## Troubleshooting
 
-- **LO unlock errors**: Check antenna connections and frequency settings
-- **Network buffer issues**: Run `net.sh` as root to increase buffer sizes
-- **Device not found**: Verify USRP address in `--args` parameter
-- **File format errors**: Ensure input files are in fc32 binary format
+- **Device not found**: Verify USRP address in `--args` parameter and network connectivity
+- **Clock reference issues**: Ensure proper cabling for external references if using external/gpsdo options
+- **Performance issues**: Run `net.sh` as root to configure optimal network buffer sizes
+- **LO unlock errors**: Check antenna connections and verify frequency settings are within device specifications
 
 ## Development
 
 The project is structured with:
-- Main application logic in `txrx_samples_from_to_file.cpp`
+- Main application logic in `txrx_sync.cpp`
 - Threading and streaming workers in `workers.cpp`
+- File I/O operations handled by worker functions
 - CMake-based build system
 
-For development, please follow existing code style and maintain thread safety in the worker functions.
+The project follows these key design principles:
+- Thread-safe operations for concurrent TX/RX
+- Proper resource cleanup and exception handling
+- Consistent parameter validation
+- Clear separation of concerns between main application and worker functions
+- Support for multi-channel operations
+
+For development, please follow existing code style and maintain thread safety in worker functions.

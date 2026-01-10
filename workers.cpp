@@ -26,7 +26,7 @@ std::atomic<bool> stop_signal_called(false);
  * @param spb Samples per buffer - number of samples to process in each iteration
  * @param start_time Time specification for when transmission should begin
  */
-void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const vector<string> &filenames, size_t spb,
+void transmit_from_file_worker(const uhd::tx_streamer::sptr &tx_stream, const vector<string> &filenames, size_t spb,
                                const uhd::time_spec_t &start_time) {
     // Initialize TX metadata
     uhd::tx_metadata_t md;
@@ -41,15 +41,17 @@ void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const vector<st
     vector<std::vector<complexf> > buffs(tx_stream->get_num_channels(), std::vector<complexf>(spb));
     vector<complexf *> buff_ptrs;
     for (auto &buff: buffs) {
-        buff_ptrs.push_back(&buff.front());
+        buff_ptrs.push_back(buff.data());
     }
 
     // Open input files
-    vector<std::shared_ptr<std::ifstream> > infiles = filenames
-    | stdv::transform([](const string &file) {
-        return std::make_shared<std::ifstream>(file, std::ios::binary);
-    })
-    | stdr::to<vector>();
+    auto infiles = stdr::to<vector>(
+        filenames
+        | stdv::transform([](const string &file) {
+            return std::make_shared<std::ifstream>(
+                file, std::ios::binary);
+        }));
+
     // std::ranges::transform(filenames, std::back_inserter(infiles), [&](const std::string &f) {
     //     return std::make_shared<std::ifstream>(f, std::ios::binary);
     // });
@@ -161,18 +163,20 @@ void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const vector<st
  * @param start_time Time specification for when reception should begin
  * @param num_samps_to_recv Total number of samples to receive before stopping
  */
-void receive_to_file_worker(uhd::rx_streamer::sptr rx_stream, const std::vector<std::string> &filenames, size_t spb,
+void receive_to_file_worker(const uhd::rx_streamer::sptr &rx_stream, const std::vector<std::string> &filenames,
+                            size_t spb,
                             const uhd::time_spec_t &start_time, size_t num_samps_to_recv) {
     // Create output files for each channel
     std::vector<std::shared_ptr<std::ofstream> > outfiles;
+
     for (auto &file: filenames) {
         outfiles.push_back(std::make_shared<std::ofstream>(file, std::ofstream::binary));
 
         if (not outfiles.back()->is_open()) {
-            UHD_LOG_ERROR("RX-STREAM", "Cannot open receive file: " << file);
+            UHD_LOG_ERROR("RX-STREAM", format("Cannot open receive file: {}" , file));
             throw std::runtime_error("Cannot open receive file:" + file);
         }
-        UHD_LOG_INFO("RX-STREAM", "RX channel saving to file: " << file);
+        UHD_LOG_INFO("RX-STREAM", format("Rx channel saving to file: {}", file));
     }
 
     // Create buffers for each channel

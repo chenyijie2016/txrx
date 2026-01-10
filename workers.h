@@ -29,7 +29,7 @@ using complexf = std::complex<float>;
  * @param spb Samples per buffer - number of samples to process in each iteration
  * @param start_time Time specification for when transmission should begin
  */
-void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const std::vector<std::string> &filenames, size_t spb, const uhd::time_spec_t &start_time);
+void transmit_from_file_worker(const uhd::tx_streamer::sptr& tx_stream, const std::vector<std::string> &filenames, size_t spb, const uhd::time_spec_t &start_time);
 
 /**
  * Receives samples from USRP to files using a streaming approach
@@ -44,6 +44,6 @@ void transmit_from_file_worker(uhd::tx_streamer::sptr tx_stream, const std::vect
  * @param start_time Time specification for when reception should begin
  * @param samps_to_recv Total number of samples to receive before stopping
  */
-void receive_to_file_worker(uhd::rx_streamer::sptr rx_stream, const std::vector<std::string> &filenames, size_t spb, const uhd::time_spec_t &start_time, size_t samps_to_recv);
+void receive_to_file_worker(const uhd::rx_streamer::sptr& rx_stream, const std::vector<std::string> &filenames, size_t spb, const uhd::time_spec_t &start_time, size_t samps_to_recv);
 
 #endif
