@@ -40,9 +40,7 @@ set(UHD_BOOST_REQUIRED_COMPONENTS
 include(UHDBoost)
 
 ### Make the executable #######################################################
-add_executable(txrx_sync txrx_sync.cpp
-        workers.cpp
-        workers.h)
+add_executable(txrx_sync txrx_sync.cpp)
 
 set(CMAKE_BUILD_TYPE "Release")
 message(STATUS "******************************************************************************")
