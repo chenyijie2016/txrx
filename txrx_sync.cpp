@@ -1,28 +1,15 @@
-#include <algorithm>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
 #include <boost/program_options.hpp>
-#include <chrono>
-#include <complex>
 #include <csignal>
-#include <filesystem>
 #include <format>
-#include <fstream>
 #include <future>
-#include <iostream>
-#include <memory>
-#include <mutex>
-#include <numeric> // for std::iota
-#include <ranges>
-#include <thread>
 #include <uhd/convert.hpp>
 #include <uhd/exception.hpp>
-#include <uhd/property_tree.hpp>
-#include <uhd/types/tune_request.hpp>
 #include <uhd/usrp/multi_usrp.hpp>
 #include <uhd/utils/safe_main.hpp>
-#include <uhd/utils/thread.hpp>
 #include <vector>
+
 #include "usrp_transceiver.h"
 #include "utils.h"
 
@@ -61,47 +48,34 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
 
     // Configure command line options
     po::options_description desc("Command line options");
-    desc.add_options()("help,h", "Show this help message")(
-            "args", po::value<string>(&args)->default_value("addr=192.168.180.2"), "USRP device address string")(
-            "tx-files",
-            po::value<vector<string>>(&config.tx_files)
-                    ->multitoken()
-                    ->default_value({"tx_data_fc32.bin"}, "tx_data_fc32.bin"),
-            "TX data files (fc32 format)")("rx-files",
-                                           po::value<vector<string>>(&config.rx_files)
-                                                   ->multitoken()
-                                                   ->default_value({"rx_data_fc32.bin"}, "rx_data_fc32.bin"),
-                                           "RX data files (fc32 format)")(
-            "tx-ants", po::value<vector<string>>(&config.tx_ants)->multitoken()->default_value({"TX/RX"}, "TX/RX"),
-            "TX antenna selection")(
-            "rx-ants", po::value<vector<string>>(&config.rx_ants)->multitoken()->default_value({"RX2"}, "RX2"),
-            "RX antenna selection")(
-            "tx-channels", po::value<vector<size_t>>(&config.tx_channels)->multitoken()->default_value({0}, "0"),
-            "TX channels (space separated)")(
-            "rx-channels", po::value<vector<size_t>>(&config.rx_channels)->multitoken()->default_value({1}, "1"),
-            "RX channels (space separated)")("spb", po::value<size_t>(&config.spb)->default_value(2500),
-                                             "Samples per buffer")("rate", po::value<double>(&rate),
-                                                                   "Sample rate (Hz)")(
-            "tx-rates", po::value<vector<double>>(&config.tx_rates)->multitoken()->default_value({1e6}, "1e6"),
-            "Tx Sample rate (Hz)")(
-            "rx-rates", po::value<vector<double>>(&config.rx_rates)->multitoken()->default_value({1e6}, "1e6"),
-            "Rx Sample rate (Hz)")("freq", po::value<double>(&freq),
-                                   "Center frequency (Hz) for ALL Tx and Rx CHANNELS. IGNORE --tx-freqs and "
-                                   "--rx-freqs settings")(
-            "tx-freqs", po::value<vector<double>>(&config.tx_freqs)->multitoken()->default_value({915e6}, "915e6"),
-            "TX Center frequencies (Hz)")(
-            "rx-freqs", po::value<vector<double>>(&config.rx_freqs)->multitoken()->default_value({915e6}, "915e6"),
-            "RX Center frequencies (Hz)")(
-            "tx-gains", po::value<vector<double>>(&config.tx_gains)->multitoken()->default_value({10.0}, "10.0"),
-            "TX gain (dB)")("rx-gains",
-                            po::value<vector<double>>(&config.rx_gains)->multitoken()->default_value({10.0}, "10.0"),
-                            "RX gain (dB)")("rx-bw", po::value<double>(&config.rx_bw), "RX Bandwidth (Hz)")(
-            "tx-bw", po::value<double>(&config.tx_bw), "TX Bandwidth (Hz)")(
-            "delay", po::value<double>(&config.delay)->default_value(1),
-            "Delay before start (seconds)")("nsamps", po::value<size_t>(&config.nsamps)->default_value(5e6),
-                                            "Number of samples to receive, 0 means until TX complete")(
-            "clock-source", po::value<string>(&config.clock_source)->default_value("internal"),
-            "Reference: internal, external, gpsdo");
+    auto option = desc.add_options();
+    option("help,h", "Show this help message");
+    option("args", po::value<string>(&args)->default_value("addr=192.168.180.2"), "USRP device address string");
+    option("tx-files", po::value<vector<string>>(&config.tx_files)->multitoken()->default_value({"tx_data_fc32.bin"}, "tx_data_fc32.bin"),
+           "TX data files (fc32 format)");
+    option("rx-files", po::value<vector<string>>(&config.rx_files)->multitoken()->default_value({"rx_data_fc32.bin"}, "rx_data_fc32.bin"),
+           "RX data files (fc32 format)");
+    option("tx-ants", po::value<vector<string>>(&config.tx_ants)->multitoken()->default_value({"TX/RX"}, "TX/RX"), "TX antenna selection");
+    option("rx-ants", po::value<vector<string>>(&config.rx_ants)->multitoken()->default_value({"RX2"}, "RX2"), "RX antenna selection");
+    option("tx-channels", po::value<vector<size_t>>(&config.tx_channels)->multitoken()->default_value({0}, "0"), "TX channels (space separated)");
+    option("rx-channels", po::value<vector<size_t>>(&config.rx_channels)->multitoken()->default_value({1}, "1"), "RX channels (space separated)");
+    option("spb", po::value<size_t>(&config.spb)->default_value(2500), "Samples per buffer");
+    option("rate", po::value<double>(&rate), "Sample rate (Hz)");
+    option("tx-rates", po::value<vector<double>>(&config.tx_rates)->multitoken()->default_value({1e6}, "1e6"),
+           "Tx Sample rate (Hz)")("rx-rates", po::value<vector<double>>(&config.rx_rates)->multitoken()->default_value({1e6}, "1e6"), "Rx Sample rate (Hz)");
+    option("freq", po::value<double>(&freq),
+           "Center frequency (Hz) for ALL Tx and Rx Channels. IGNORE --tx-freqs and "
+           "--rx-freqs settings");
+    option("tx-freqs", po::value<vector<double>>(&config.tx_freqs)->multitoken()->default_value({915e6}, "915e6"), "TX Center frequencies (Hz)");
+    option("rx-freqs", po::value<vector<double>>(&config.rx_freqs)->multitoken()->default_value({915e6}, "915e6"), "RX Center frequencies (Hz)");
+    option("tx-gains", po::value<vector<double>>(&config.tx_gains)->multitoken()->default_value({10.0}, "10.0"), "TX gain (dB)");
+    option("rx-gains", po::value<vector<double>>(&config.rx_gains)->multitoken()->default_value({10.0}, "10.0"), "RX gain (dB)");
+    //("rx-bw", po::value<double>(&config.rx_bw),
+    //                      "RX Bandwidth (Hz)")("tx-bw", po::value<double>(&config.tx_bw), "TX Bandwidth (Hz)");
+    option("delay", po::value<double>(&config.delay)->default_value(1), "Delay before start (seconds)");
+    option("nsamps", po::value<size_t>(&config.nsamps)->default_value(5e6), "Number of samples to receive, 0 means until TX complete");
+    option("clock-source", po::value<string>(&config.clock_source)->default_value("internal"), "Reference: internal, external, gpsdo");
+    option("time-source", po::value<string>(&config.time_source)->default_value("internal"), "Time Source");
 
     po::variables_map vm;
     try {
@@ -141,23 +115,24 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
     }
 
     // Create UsrpTransceiver instance
-    UsrpTransceiver transceiver(args, stop_signal_called);
+    UsrpTransceiver transceiver(args);
 
     if (not transceiver.ValidateConfiguration(config)) {
         UHD_LOG_ERROR("SYSTEM", "Invalid configuration provided");
         return EXIT_FAILURE;
     }
-    for (int i = 0; i < 2; i++) {
+    // for (int i = 0; i < 2; i++)
+    {
         transceiver.ApplyConfiguration(config);
         // Start transmission thread
         auto TxBuffer = LoadFileToBuffer(config);
 
         UHD_LOG_INFO("SYSTEM", "Starting transmission thread...");
         auto transmit_thread =
-                std::async(std::launch::async, &UsrpTransceiver::TransmitFromBuffer, &transceiver, std::ref(TxBuffer));
+                std::async(std::launch::async, &UsrpTransceiver::TransmitFromBuffer, &transceiver, std::ref(TxBuffer), std::ref(stop_signal_called));
 
         // Launch receive operation to get buffer via future
-        auto receive_future = std::async(std::launch::async, &UsrpTransceiver::ReceiveToBuffer, &transceiver);
+        auto receive_future = std::async(std::launch::async, &UsrpTransceiver::ReceiveToBuffer, &transceiver, std::ref(stop_signal_called));
 
         // Wait for transmission to complete
         transmit_thread.wait();

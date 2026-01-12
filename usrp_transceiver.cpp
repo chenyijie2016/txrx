@@ -16,7 +16,7 @@ using std::vector;
 using namespace std::chrono_literals;
 
 
-UsrpTransceiver::UsrpTransceiver(const std::string &args, std::atomic<bool> &stop_signal) : stop_signal(stop_signal) {
+UsrpTransceiver::UsrpTransceiver(const std::string &args) {
     usrp = uhd::usrp::multi_usrp::make(args);
     UHD_LOG_INFO("UsrpTransceiver", format("Creating USRP device with args: {}", args));
 }
@@ -51,15 +51,13 @@ bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config) {
     if (stdr::any_of(config.rx_channels, [&](const auto &ch) { return ch >= total_rx_channels; })) {
         UHD_LOG_ERROR("CHECK", "RX channels are not supported");
     }
-    std::vector<size_t> tx_sizes = {config.tx_channels.size(), config.tx_files.size(), config.tx_ants.size(),
-                                    config.tx_gains.size(), config.tx_freqs.size()};
+    std::vector<size_t> tx_sizes = {config.tx_channels.size(), config.tx_files.size(), config.tx_ants.size(), config.tx_gains.size(), config.tx_freqs.size()};
     if (stdr::adjacent_find(tx_sizes, std::not_equal_to{}) != tx_sizes.end()) {
         UHD_LOG_ERROR("CHECK", "Tx configurations mismatch!");
         return false;
     }
 
-    std::vector<size_t> rx_sizes = {config.rx_channels.size(), config.rx_files.size(), config.rx_ants.size(),
-                                    config.rx_gains.size(), config.rx_freqs.size()};
+    std::vector<size_t> rx_sizes = {config.rx_channels.size(), config.rx_files.size(), config.rx_ants.size(), config.rx_gains.size(), config.rx_freqs.size()};
     if (stdr::adjacent_find(rx_sizes, std::not_equal_to{}) != rx_sizes.end()) {
         UHD_LOG_ERROR("CHECK", "Rx configurations mismatch!");
         return false;
@@ -73,8 +71,7 @@ bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config) {
     }
 
     // Verify all TX files have the same size
-    std::vector<std::uintmax_t> sizes = stdr::to<std::vector>(
-            config.tx_files | stdv::transform([](const std::string &f) { return fs::file_size(f); }));
+    std::vector<std::uintmax_t> sizes = stdr::to<std::vector>(config.tx_files | stdv::transform([](const std::string &f) { return fs::file_size(f); }));
 
 
     if (stdr::adjacent_find(sizes, std::not_equal_to{}) != sizes.end()) {
@@ -170,8 +167,7 @@ void UsrpTransceiver::ApplyTuneRequest(const UsrpConfig &config) {
 
     // Check TX LO lock
     for (size_t ch: config.tx_channels) {
-        if (auto sensor_names = usrp->get_tx_sensor_names(ch);
-            std::ranges::find(sensor_names, "lo_locked") != sensor_names.end()) {
+        if (auto sensor_names = usrp->get_tx_sensor_names(ch); std::ranges::find(sensor_names, "lo_locked") != sensor_names.end()) {
             auto lo_locked = usrp->get_tx_sensor("lo_locked", ch);
             UHD_LOG_INFO("SYSTEM", format("Checking Tx(ch={}): {}", ch, lo_locked.to_pp_string()));
             UHD_ASSERT_THROW(lo_locked.to_bool());
@@ -180,8 +176,7 @@ void UsrpTransceiver::ApplyTuneRequest(const UsrpConfig &config) {
 
     // Check RX LO lock
     for (size_t ch: config.rx_channels) {
-        if (auto sensor_names = usrp->get_rx_sensor_names(ch);
-            std::ranges::find(sensor_names, "lo_locked") != sensor_names.end()) {
+        if (auto sensor_names = usrp->get_rx_sensor_names(ch); std::ranges::find(sensor_names, "lo_locked") != sensor_names.end()) {
             auto lo_locked = usrp->get_rx_sensor("lo_locked", ch);
             UHD_LOG_INFO("SYSTEM", format("Checking Rx(ch={}): {}", ch, lo_locked.to_pp_string()));
             UHD_ASSERT_THROW(lo_locked.to_bool());
@@ -192,8 +187,7 @@ void UsrpTransceiver::ApplyTuneRequest(const UsrpConfig &config) {
     size_t num_mboards = usrp->get_num_mboards();
     if (config.clock_source == "external") {
         for (auto mboard: stdv::iota(static_cast<size_t>(0), num_mboards)) {
-            if (auto sensor_names = usrp->get_mboard_sensor_names(mboard);
-                std::ranges::find(sensor_names, "ref_locked") != sensor_names.end()) {
+            if (auto sensor_names = usrp->get_mboard_sensor_names(mboard); std::ranges::find(sensor_names, "ref_locked") != sensor_names.end()) {
                 auto ref_locked = usrp->get_mboard_sensor("ref_locked", mboard);
                 UHD_LOG_INFO("SYSTEM", format("Checking mboard(={}): {}", mboard, ref_locked.to_pp_string()));
                 UHD_ASSERT_THROW(ref_locked.to_bool());
@@ -202,8 +196,7 @@ void UsrpTransceiver::ApplyTuneRequest(const UsrpConfig &config) {
     }
     if (config.clock_source == "mimo") {
         for (auto mboard: stdv::iota(static_cast<size_t>(0), num_mboards)) {
-            if (auto sensor_names = usrp->get_mboard_sensor_names(mboard);
-                std::ranges::find(sensor_names, "mimo_locked") != sensor_names.end()) {
+            if (auto sensor_names = usrp->get_mboard_sensor_names(mboard); std::ranges::find(sensor_names, "mimo_locked") != sensor_names.end()) {
                 auto ref_locked = usrp->get_mboard_sensor("mimo_locked", mboard);
                 UHD_LOG_INFO("SYSTEM", format("Checking mboard(={}): {}", mboard, ref_locked.to_pp_string()));
                 UHD_ASSERT_THROW(ref_locked.to_bool());
@@ -239,7 +232,7 @@ void UsrpTransceiver::ApplyTimeSync(const UsrpConfig &config) {
     UHD_LOG_INFO("CONFIG", std::format("Current USRP time: {:.6f} seconds", usrp->get_time_now().get_real_secs()));
 }
 
-void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buffs) {
+void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buffs, std::atomic<bool> &stop_signal) {
     // Create TX stream
     UHD_LOG_TRACE("STREAM", "Creating TX stream");
     uhd::stream_args_t tx_stream_args("fc32", "sc16");
@@ -253,7 +246,6 @@ void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buf
     md.has_time_spec = true;
     md.time_spec = start_time;
     double timeout = 5;
-    bool first_packet = true;
 
     // Create buffer pointers for transmission
     std::vector<complexf *> buff_ptrs;
@@ -281,13 +273,11 @@ void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buf
         size_t samps_sent = tx_stream->send(offset_ptrs, samps_to_send, md, timeout);
 
         if (samps_sent == 0) {
-            UHD_LOG_WARNING("TX-BUFFER",
-                            format("send() returned 0 samples [{}/{}]", current_sample_idx, total_samples));
+            UHD_LOG_WARNING("TX-BUFFER", format("send() returned 0 samples [{}/{}]", current_sample_idx, total_samples));
             continue;
         }
         num_samps_transmitted += samps_sent;
         current_sample_idx += samps_sent;
-        first_packet = false;
         timeout = 0.1;
     }
 
@@ -298,7 +288,7 @@ void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buf
     UHD_LOG_INFO("TX-BUFFER", "Transmit completed! Samples sent: " << num_samps_transmitted);
 }
 
-std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer() {
+std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer(std::atomic<bool> &stop_signal) {
     // Create RX stream
     UHD_LOG_TRACE("STREAM", "Creating RX stream");
     uhd::stream_args_t rx_stream_args("fc32", "sc16");
@@ -314,7 +304,6 @@ std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer() {
     }
 
     // Initialize reception parameters
-    bool first_packet = true;
     double timeout = 5;
     uhd::stream_cmd_t stream_cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
     stream_cmd.num_samps = usrp_config.nsamps;
@@ -332,18 +321,17 @@ std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer() {
 
     // Main reception loop
     while (not stop_signal.load(std::memory_order_acquire) && (num_samps_received < usrp_config.nsamps)) {
+        // Get real buffer pos
         std::vector<complexf *> offset_ptrs(rx_stream->get_num_channels());
         for (size_t ch = 0; ch < rx_stream->get_num_channels(); ++ch) {
             offset_ptrs[ch] = buffs[ch].data() + num_samps_received;
         }
 
 
-        size_t num_rx_samps = rx_stream->recv(offset_ptrs, usrp_config.spb, md, timeout);
+        const size_t num_rx_samps = rx_stream->recv(offset_ptrs, usrp_config.spb, md, timeout);
 
-        if (first_packet) {
-            timeout = 0.1; // Reduce timeout after first packet
-            first_packet = false;
-        }
+        timeout = 0.1; // Reduce timeout after first packet
+
 
         // Handle different error conditions
         if (md.error_code == uhd::rx_metadata_t::ERROR_CODE_TIMEOUT) {
