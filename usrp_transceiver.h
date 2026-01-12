@@ -29,7 +29,7 @@ private:
      * Applies the USRP TuneRequest to the device
      */
     void ApplyTuneRequest(const UsrpConfig &config);
-
+    void ApplyTimeSync(const UsrpConfig &config);
 public:
     uhd::time_spec_t start_time;
 

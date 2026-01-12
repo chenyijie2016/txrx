@@ -87,7 +87,6 @@ bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config) {
 
 void UsrpTransceiver::ApplyConfiguration(const UsrpConfig &config) {
 
-
     UHD_LOG_INFO("CONFIG", format("====== Configuring Tx ======"))
     for (const auto &[index, ch]: stdv::enumerate(config.tx_channels)) {
         UHD_LOG_INFO("CONFIG", format("====== Tx Channel {}", ch))
@@ -123,6 +122,9 @@ void UsrpTransceiver::ApplyConfiguration(const UsrpConfig &config) {
     }
     UHD_LOG_INFO("CONFIG", format("============================"))
 
+    if (not(this->usrp_config.clock_source == config.clock_source and this->usrp_config.time_source == config.time_source)) {
+        ApplyTimeSync(config);
+    }
 
     if (not(this->usrp_config.tx_freqs == config.tx_freqs and this->usrp_config.rx_freqs == config.rx_freqs)) {
         ApplyTuneRequest(config);
@@ -132,33 +134,9 @@ void UsrpTransceiver::ApplyConfiguration(const UsrpConfig &config) {
     start_time = usrp->get_time_now() + uhd::time_spec_t(config.delay);
     UHD_LOG_INFO("SYSTEM", std::format("Start time: {:.3f} s", start_time.get_real_secs()));
 }
+
+
 void UsrpTransceiver::ApplyTuneRequest(const UsrpConfig &config) {
-
-    // Configure clock reference
-    UHD_LOG_INFO("CONFIG", format("Setting clock reference to: {}", config.clock_source));
-    usrp->set_clock_source(config.clock_source);
-
-    // Configure time reference
-    if (config.clock_source == "external" || config.clock_source == "gpsdo") {
-        UHD_LOG_INFO("CONFIG", std::format("Setting time reference to: {}", config.clock_source));
-        usrp->set_time_source("external");
-    } else {
-        usrp->set_time_source("internal");
-    }
-
-    // Wait for PPS sync and set time
-    UHD_LOG_INFO("CONFIG", "Waiting for PPS sync and setting time...");
-    // usrp->set_time_unknown_pps(uhd::time_spec_t(0.0));
-
-    const uhd::time_spec_t last_pps_time = usrp->get_time_last_pps();
-    while (last_pps_time == usrp->get_time_last_pps()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    // This command will be processed fairly soon after the last PPS edge:
-    usrp->set_time_next_pps(uhd::time_spec_t(0.0));
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    // Display current USRP time
-    UHD_LOG_INFO("CONFIG", std::format("Current USRP time: {:.6f} seconds", usrp->get_time_now().get_real_secs()));
 
 
     auto now = usrp->get_time_now();
@@ -232,6 +210,33 @@ void UsrpTransceiver::ApplyTuneRequest(const UsrpConfig &config) {
             }
         }
     }
+}
+void UsrpTransceiver::ApplyTimeSync(const UsrpConfig &config) {
+    // Configure clock reference
+    UHD_LOG_INFO("CONFIG", format("Setting clock reference to: {}", config.clock_source));
+    usrp->set_clock_source(config.clock_source);
+
+    // Configure time reference
+    if (config.clock_source == "external" || config.clock_source == "gpsdo") {
+        UHD_LOG_INFO("CONFIG", std::format("Setting time reference to: {}", config.clock_source));
+        usrp->set_time_source("external");
+    } else {
+        usrp->set_time_source("internal");
+    }
+
+    // Wait for PPS sync and set time
+    UHD_LOG_INFO("CONFIG", "Waiting for PPS sync and setting time...");
+    // usrp->set_time_unknown_pps(uhd::time_spec_t(0.0));
+
+    const uhd::time_spec_t last_pps_time = usrp->get_time_last_pps();
+    while (last_pps_time == usrp->get_time_last_pps()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    // This command will be processed fairly soon after the last PPS edge:
+    usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    // Display current USRP time
+    UHD_LOG_INFO("CONFIG", std::format("Current USRP time: {:.6f} seconds", usrp->get_time_now().get_real_secs()));
 }
 
 void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buffs) {
