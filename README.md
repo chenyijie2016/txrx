@@ -13,15 +13,15 @@ This project implements a Software Defined Radio (SDR) application that enables 
 - Real-time LO lock checking
 - Clock synchronization with PPS
 - Reference clock support (internal, external, GPSDO)
-- Thread-safe worker implementations for file I/O and streaming
+- Integrated worker implementations for file I/O and streaming in main application
+- Structured configuration management for USRP parameters
 - Graceful shutdown handling with signal processing
 
 ## Project Structure
 
 ### Core Components
 
-- `txrx_sync.cpp` - Main application implementing simultaneous TX/RX functionality with file I/O
-- `workers.cpp` / `workers.h` - Worker threads for file I/O and streaming operations
+- `txrx_sync.cpp` - Main application implementing simultaneous TX/RX functionality with file I/O and integrated worker functions
 - `net.sh` - System network buffer configuration script
 - `CMakeLists.txt` - Build configuration
 
@@ -65,24 +65,24 @@ make
 | `--args` | USRP device address string | `"addr=192.168.180.2"` |
 | `--tx-files` | TX data files (fc32 format) | `"tx_data_fc32.bin"` |
 | `--rx-files` | RX data files (fc32 format) | `"rx_data_fc32.bin"` |
-| `--tx-ant` | TX antenna selection | `"TX/RX"` |
-| `--rx-ant` | RX antenna selection | `"RX2"` |
+| `--tx-ants` | TX antenna selections (one per channel) | `"TX/RX"` |
+| `--rx-ants` | RX antenna selections (one per channel) | `"RX2"` |
 | `--tx-channels` | TX channels (space separated) | `0` |
 | `--rx-channels` | RX channels (space separated) | `1` |
 | `--spb` | Samples per buffer | `2500` |
-| `--rate` | Sample rate (Hz) | N/A (requires --tx-rate and --rx-rate if not set) |
-| `--tx-rate` | Tx Sample rate (Hz) | `5e6` |
-| `--rx-rate` | Rx Sample rate (Hz) | `5e6` |
+| `--rate` | Sample rate (Hz) for both TX and RX | N/A (requires --tx-rates and --rx-rates if not set) |
+| `--tx-rates` | TX Sample rates (Hz) (one per channel) | `1e6` |
+| `--rx-rates` | RX Sample rates (Hz) (one per channel) | `1e6` |
 | `--freq` | Center frequency (Hz) for ALL Tx and Rx CHANNELS. IGNORE --tx-freqs and --rx-freqs settings | N/A |
-| `--tx-freqs` | TX Center frequencies (Hz) | `915e6` |
-| `--rx-freqs` | RX Center frequencies (Hz) | `915e6` |
-| `--tx-gain` | TX gain (dB) | `10.0` |
-| `--rx-gain` | RX gain (dB) | `10.0` |
+| `--tx-freqs` | TX Center frequencies (Hz) (one per channel) | `915e6` |
+| `--rx-freqs` | RX Center frequencies (Hz) (one per channel) | `915e6` |
+| `--tx-gains` | TX gains (dB) (one per channel) | `10.0` |
+| `--rx-gains` | RX gains (dB) (one per channel) | `10.0` |
 | `--rx-bw` | RX Bandwidth (Hz) | N/A |
 | `--tx-bw` | TX Bandwidth (Hz) | N/A |
 | `--delay` | Delay before start (seconds) | `1` |
 | `--nsamps` | Number of samples to receive, 0 means until TX complete | `0` |
-| `--ref` | Reference: internal, external, gpsdo | `"internal"` |
+| `--clock-source` | Reference: internal, external, gpsdo | `"internal"` |
 
 ### Example Usage
 
@@ -93,12 +93,12 @@ make
 
 #### Multiple Channels
 ```bash
-./txrx_sync --tx-channels 0 1 --rx-channels 0 1 --tx-files tx0.fc32 tx1.fc32 --rx-files rx0.fc32 rx1.fc32
+./txrx_sync --tx-channels 0 1 --rx-channels 0 1 --tx-files tx0.fc32 tx1.fc32 --rx-files rx0.fc32 rx1.fc32 --tx-ants TX/RX TX/RX --rx-ants RX2 RX2
 ```
 
 #### Custom Parameters
 ```bash
-./txrx_sync --args "addr=192.168.10.2" --tx-freqs 2.4e9 2.5e9 --rx-freqs 2.4e9 2.5e9 --tx-gain 20 --rx-gain 15 --rate 10e6 --tx-files tx1.fc32 tx2.fc32 --rx-files rx1.fc32 rx2.fc32
+./txrx_sync --args "addr=192.168.10.2" --tx-freqs 2.4e9 2.5e9 --rx-freqs 2.4e9 2.5e9 --tx-gains 20 25 --rx-gains 15 18 --tx-rates 5e6 5e6 --rx-rates 5e6 5e6 --tx-files tx1.fc32 tx2.fc32 --rx-files rx1.fc32 rx2.fc32
 ```
 
 ## File Formats
@@ -137,16 +137,15 @@ The application handles SIGINT (Ctrl+C) for graceful shutdown. During execution,
 ## Development
 
 The project is structured with:
-- Main application logic in `txrx_sync.cpp`
-- Threading and streaming workers in `workers.cpp`
-- File I/O operations handled by worker functions
+- Main application logic and worker functions consolidated in `txrx_sync.cpp`
+- File I/O operations handled by integrated worker functions
 - CMake-based build system
 
 The project follows these key design principles:
 - Thread-safe operations for concurrent TX/RX
 - Proper resource cleanup and exception handling
 - Consistent parameter validation
-- Clear separation of concerns between main application and worker functions
+- Clear organization of USRP configuration parameters using structured configuration
 - Support for multi-channel operations
 
 For development, please follow existing code style and maintain thread safety in worker functions.
