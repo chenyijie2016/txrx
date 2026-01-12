@@ -43,6 +43,9 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZMQ REQUIRED libzmq)
 find_package(nlohmann_json REQUIRED)
 
+# Find Boost Interprocess library
+find_package(Boost REQUIRED COMPONENTS system thread)
+
 ### Make the executable #######################################################
 add_executable(txrx_sync txrx_sync.cpp utils.cpp usrp_transceiver.cpp)
 add_executable(txrx_server utils.cpp usrp_transceiver.cpp server.cpp)
@@ -51,6 +54,7 @@ target_include_directories(txrx_server
         PRIVATE
         ${Boost_INCLUDE_DIRS}
         ${ZMQ_INCLUDE_DIRS}
+        ${UHD_INCLUDE_DIRS}
 )
 
 set(CMAKE_BUILD_TYPE "Release")
@@ -67,7 +71,7 @@ if(NOT UHD_USE_STATIC_LIBS)
     message(STATUS "Linking against shared UHD library.")
     target_link_libraries(txrx_sync  PUBLIC uhd Boost::program_options)
     target_link_libraries(txrx_server  PUBLIC uhd Boost::program_options nlohmann_json::nlohmann_json
-            ${ZMQ_LIBRARIES})
+            ${ZMQ_LIBRARIES} ${Boost_LIBRARIES})
     # Shared library case: All we need to do is link against the library, and
     # anything else we need (in this case, some Boost libraries):
 else(NOT UHD_USE_STATIC_LIBS)
