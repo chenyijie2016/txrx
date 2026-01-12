@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <future>
 #include <ranges>
+#include <numeric>  // for std::iota
 
 
 namespace po = boost::program_options;
@@ -66,19 +67,68 @@ struct UsrpConfig {
 };
 
 /**
- * Transmits samples from files to USRP using a streaming approach
+ * Loads data from multiple TX files into a buffer
  *
- * This function reads complex floating-point samples from specified files and streams them
+ * This function reads complex floating-point samples from specified files and loads them
+ * into a buffer organized by channel. Each channel has its own vector of complex samples.
+ *
+ * @param config USRP configuration containing the TX file paths
+ * @return A vector of vectors containing the loaded complex samples, one per channel
+ */
+std::vector<std::vector<complexf>> LoadFileToBuffer(const UsrpConfig &config) {
+    // Create buffers for each channel
+    std::vector<std::vector<complexf>> buffs(config.tx_channels.size());
+
+    // Load data from input files into buffers
+    for (size_t index = 0; index < config.tx_channels.size(); ++index) {
+        // Get file size using std::filesystem
+        std::uintmax_t file_size = fs::file_size(config.tx_files[index]);
+
+        // Calculate number of complex samples
+        std::uintmax_t num_samples = file_size / sizeof(complexf);
+
+        // Resize buffer to accommodate all samples
+        buffs[index].resize(num_samples);
+
+        // Open input file and read all samples
+        std::ifstream infile(config.tx_files[index], std::ios::binary);
+
+        if (!infile.is_open()) {
+            UHD_LOG_ERROR("BUFFER-LOAD", format("Cannot open TX file: {}", config.tx_files[index]));
+            throw std::runtime_error("Cannot open TX file: " + config.tx_files[index]);
+        }
+
+        // Read all samples from the file
+        infile.read(reinterpret_cast<char*>(buffs[index].data()), file_size);
+
+        // Check if read was successful
+        if (static_cast<std::uintmax_t>(infile.gcount()) != file_size) {
+            UHD_LOG_WARNING("BUFFER-LOAD", format("Incomplete read for TX file: {}", config.tx_files[index]));
+        }
+
+        infile.close();
+    }
+
+    UHD_LOG_INFO("BUFFER-LOAD", format("Loaded {} channels of TX data", buffs.size()));
+    return buffs;
+}
+
+/**
+ * Transmits samples from a buffer to USRP using a streaming approach
+ *
+ * This function takes complex floating-point samples from a buffer and streams them
  * to the USRP device using the provided TX streamer. It implements an efficient buffering
  * mechanism to ensure continuous transmission without interruption.
  *
  * @param tx_stream TX streamer to send samples to the USRP
- * @param filenames Vector of file paths containing fc32 format samples to transmit
+ * @param buffs Buffer containing complex samples organized by channel
  * @param spb Samples per buffer - number of samples to process in each iteration
  * @param start_time Time specification for when transmission should begin
  */
-void transmit_from_file_worker(const uhd::tx_streamer::sptr &tx_stream, const vector<string> &filenames, size_t spb,
-                               const uhd::time_spec_t &start_time) {
+void TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream,
+                       std::vector<std::vector<complexf>> &buffs,
+                       size_t spb,
+                       const uhd::time_spec_t &start_time) {
     // Initialize TX metadata
     uhd::tx_metadata_t md;
     md.start_of_burst = false;
@@ -88,78 +138,27 @@ void transmit_from_file_worker(const uhd::tx_streamer::sptr &tx_stream, const ve
     double timeout = 5;
     bool first_packet = true;
 
-    // Create buffers for each channel
-    vector<std::vector<complexf> > buffs(tx_stream->get_num_channels(), std::vector<complexf>(spb));
-    vector<complexf *> buff_ptrs;
-    for (auto &buff: buffs) {
+    // Create buffer pointers for transmission
+    std::vector<complexf *> buff_ptrs;
+    for (auto &buff : buffs) {
         buff_ptrs.push_back(buff.data());
     }
 
-    // Open input files
-    auto infiles = stdr::to<vector>(
-        filenames
-        | stdv::transform([](const string &file) {
-            return std::make_shared<std::ifstream>(
-                file, std::ios::binary);
-        }));
-
-    // std::ranges::transform(filenames, std::back_inserter(infiles), [&](const std::string &f) {
-    //     return std::make_shared<std::ifstream>(f, std::ios::binary);
-    // });
     size_t num_samps_transmitted = 0;
-    bool eof = false;
 
     // Track buffer state
-    size_t buf_valid_samps = 0; // Number of valid samples in buffer
-    size_t buf_sent_samps = 0; // Number of samples already sent from buffer
+    size_t current_sample_idx = 0; // Current position in the buffer
+    size_t total_samples = buffs.empty() ? 0 : buffs[0].size(); // Total samples to transmit
 
-    UHD_LOG_INFO("TX-STREAM", format("Starting transmission from {} file(s)",filenames.size()))
-    for (const auto &file: filenames) {
-        UHD_LOG_INFO("TX-STREAM", format("{}", file))
-    }
+    UHD_LOG_INFO("TX-BUFFER", format("Starting transmission from buffer with {} samples per channel", total_samples))
 
-
-    while (!stop_signal_called) {
-        /* ---------- Read from files when buffer is empty ---------- */
-        if (buf_sent_samps == buf_valid_samps && !eof) {
-            buf_sent_samps = 0;
-            buf_valid_samps = 0;
-            eof = false;
-
-            // Read samples from all files simultaneously
-            for (size_t ch = 0; ch < tx_stream->get_num_channels(); ++ch) {
-                infiles[ch]->read(
-                    reinterpret_cast<char *>(buffs[ch].data()),
-                    spb * sizeof(complexf)
-                );
-                size_t read_samps =
-                        infiles[ch]->gcount() / sizeof(complexf);
-
-                if (ch == 0) {
-                    buf_valid_samps = read_samps;
-                } else {
-                    // Take minimum across all channels to ensure synchronized data
-                    buf_valid_samps =
-                            std::min(buf_valid_samps, read_samps);
-                }
-            }
-
-            if (buf_valid_samps == 0) {
-                eof = true;
-            }
-        }
-
-        if (buf_valid_samps == 0 && eof) {
-            UHD_LOG_DEBUG("TX-STREAM", "Reached end of input files, exiting transmission loop")
-            break;
-        }
-
-        /* ---------- Send remaining samples ---------- */
-        size_t samps_to_send = buf_valid_samps - buf_sent_samps;
+    while (!stop_signal_called && current_sample_idx < total_samples) {
+        /* ---------- Send samples from buffer ---------- */
+        size_t samps_to_send = std::min(spb, total_samples - current_sample_idx);
 
         std::vector<complexf *> offset_ptrs(tx_stream->get_num_channels());
         for (size_t ch = 0; ch < tx_stream->get_num_channels(); ++ch) {
-            offset_ptrs[ch] = buffs[ch].data() + buf_sent_samps;
+            offset_ptrs[ch] = buffs[ch].data() + current_sample_idx;
         }
 
         size_t samps_sent = tx_stream->send(
@@ -170,34 +169,20 @@ void transmit_from_file_worker(const uhd::tx_streamer::sptr &tx_stream, const ve
         );
 
         if (samps_sent == 0) {
-            UHD_LOG_WARNING("TX-STREAM", "send() returned 0 samples");
+            UHD_LOG_WARNING("TX-BUFFER", format("send() returned 0 samples [{}/{}]", current_sample_idx, total_samples));
             continue;
         }
         num_samps_transmitted += samps_sent;
-        buf_sent_samps += samps_sent;
+        current_sample_idx += samps_sent;
         first_packet = false;
         timeout = 0.1;
-
-        /* ---------- End of file and buffer completely sent ---------- */
-        if (eof && buf_sent_samps == buf_valid_samps) {
-            md.end_of_burst = true;
-            tx_stream->send("", 0, md);
-            UHD_LOG_DEBUG("TX-STREAM", "End of burst transmitted")
-            break;
-        }
     }
 
     // Finalize transmission
     md.end_of_burst = true;
     tx_stream->send("", 0, md);
 
-    // Close all input files
-    std::ranges::for_each(infiles, [](auto f) {
-        if (f->is_open()) {
-            f->close();
-        }
-    });
-    UHD_LOG_INFO("TX-STREAM", "Transmit completed! Samples sent: " << num_samps_transmitted);
+    UHD_LOG_INFO("TX-BUFFER", "Transmit completed! Samples sent: " << num_samps_transmitted);
 }
 
 
@@ -645,9 +630,11 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
 
 
     // Start transmission thread
+    auto TxBuffer = LoadFileToBuffer(config);
+
     UHD_LOG_INFO("SYSTEM", "Starting transmission thread...");
-    auto transmit_thread = std::async(std::launch::async, transmit_from_file_worker,
-                                      tx_stream, config.tx_files, config.spb, seconds_in_future
+    auto transmit_thread = std::async(std::launch::async, TransmitFromBuffer,
+                                      tx_stream, std::ref(TxBuffer), config.spb, seconds_in_future
     );
     // size_t nums_to_recv = sizes.front() / sizeof(complexf);
 
