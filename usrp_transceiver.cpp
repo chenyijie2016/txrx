@@ -3,7 +3,7 @@
 #include <utility>
 #include <ranges>
 #include <chrono>
-
+#include <filesystem>
 // External global flag for signal handling (defined in txrx_sync.cpp)
 extern std::atomic<bool> stop_signal_called;
 
@@ -17,16 +17,15 @@ using std::complex;
 using std::format;
 using namespace std::chrono_literals;
 
-UsrpTransceiver::UsrpTransceiver(UsrpConfig  cfg) : config(std::move(cfg)) {
-    usrp = uhd::usrp::multi_usrp::make(config.args);
-    UHD_LOG_INFO("SYSTEM", format("USRP device info: {}", usrp->get_pp_string()));
+
+UsrpTransceiver::UsrpTransceiver(const std::string &args) {
+    usrp = uhd::usrp::multi_usrp::make(args);
+    UHD_LOG_INFO("UsrpTransceiver", format("Creating USRP device with args: {}", args));
 }
 
-UsrpTransceiver::~UsrpTransceiver() {
-    // Destructor implementation if needed
-}
 
-bool UsrpTransceiver::ValidateConfiguration() {
+
+bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config) {
     // Check channel validity
     size_t total_tx_channels = usrp->get_tx_num_channels();
     size_t total_rx_channels = usrp->get_rx_num_channels();
@@ -106,7 +105,9 @@ bool UsrpTransceiver::ValidateConfiguration() {
     return true;
 }
 
-void UsrpTransceiver::ApplyConfiguration() {
+void UsrpTransceiver::ApplyConfiguration(const UsrpConfig &config) {
+    this->_config = config;
+
     UHD_LOG_INFO("CONFIG", format("====== Configuring Tx ======"))
     for (const auto &[index, ch]: stdv::enumerate(config.tx_channels)) {
         UHD_LOG_INFO("CONFIG", format("====== Tx Channel {}", ch))
@@ -169,7 +170,7 @@ void UsrpTransceiver::ApplyConfiguration() {
 
     // Sync tx and tx
     UHD_LOG_INFO("CONFIG", "Start Sync tune Request for Tx and Rx")
-    usrp->set_command_time(uhd::time_spec_t(0.5),
+    usrp->set_command_time(uhd::time_spec_t(0.3),
                            uhd::usrp::multi_usrp::ALL_MBOARDS);
     for (const auto &[ch, freq_]: stdv::zip(config.tx_channels, config.tx_freqs)) {
         uhd::tune_request_t tune_req(freq_);
@@ -184,7 +185,7 @@ void UsrpTransceiver::ApplyConfiguration() {
 
     usrp->clear_command_time(uhd::usrp::multi_usrp::ALL_MBOARDS);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     for (const size_t ch: config.tx_channels) {
         UHD_LOG_INFO("CONFIG", std::format("Tx channel {} freq set to {:.3f} MHz", ch, usrp->get_tx_freq(ch)/1e6));
@@ -239,12 +240,21 @@ void UsrpTransceiver::ApplyConfiguration() {
             }
         }
     }
+
+    start_time = usrp->get_time_now() + uhd::time_spec_t(config.delay);
+    UHD_LOG_INFO(
+        "SYSTEM",
+        std::format("Start time: {:.3f} seconds in the future (absolute time: {:.6f})", config.delay, start_time.
+            get_real_secs()));
 }
 
-void UsrpTransceiver::TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream,
-                                        std::vector<std::vector<complexf>> &buffs,
-                                        size_t spb,
-                                        const uhd::time_spec_t &start_time) {
+void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buffs) {
+    // Create TX stream
+    UHD_LOG_TRACE("STREAM", "Creating TX stream");
+    uhd::stream_args_t tx_stream_args("fc32", "sc16");
+    tx_stream_args.channels = _config.tx_channels;
+    uhd::tx_streamer::sptr tx_stream = usrp->get_tx_stream(tx_stream_args);
+
     // Initialize TX metadata
     uhd::tx_metadata_t md;
     md.start_of_burst = false;
@@ -270,7 +280,7 @@ void UsrpTransceiver::TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream
 
     while (!stop_signal_called && current_sample_idx < total_samples) {
         /* ---------- Send samples from buffer ---------- */
-        size_t samps_to_send = std::min(spb, total_samples - current_sample_idx);
+        size_t samps_to_send = std::min(_config.spb, total_samples - current_sample_idx);
 
         std::vector<complexf *> offset_ptrs(tx_stream->get_num_channels());
         for (size_t ch = 0; ch < tx_stream->get_num_channels(); ++ch) {
@@ -302,12 +312,16 @@ void UsrpTransceiver::TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream
     UHD_LOG_INFO("TX-BUFFER", "Transmit completed! Samples sent: " << num_samps_transmitted);
 }
 
-std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer(const uhd::rx_streamer::sptr &rx_stream,
-                                                                   size_t spb,
-                                                                   const uhd::time_spec_t &start_time,
-                                                                   size_t num_samps_to_recv) {
+std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer() {
+    // Create RX stream
+    UHD_LOG_TRACE("STREAM", "Creating RX stream");
+    uhd::stream_args_t rx_stream_args("fc32", "sc16");
+    rx_stream_args.channels = _config.rx_channels;
+    uhd::rx_streamer::sptr rx_stream = usrp->get_rx_stream(rx_stream_args);
+
+
     // Create buffers for each channel
-    std::vector<std::vector<complexf>> buffs(rx_stream->get_num_channels(), std::vector<complexf>(num_samps_to_recv));
+    std::vector<std::vector<complexf>> buffs(rx_stream->get_num_channels(), std::vector<complexf>(_config.nsamps));
     std::vector<complexf *> buff_ptrs;
     for (auto &buff: buffs) {
         buff_ptrs.push_back(buff.data());
@@ -317,11 +331,11 @@ std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer(const uhd::r
     bool first_packet = true;
     double timeout = 5;
     uhd::stream_cmd_t stream_cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
-    stream_cmd.num_samps = num_samps_to_recv;
+    stream_cmd.num_samps = _config.nsamps;
     stream_cmd.stream_now = false;
     stream_cmd.time_spec = start_time;
 
-    UHD_LOG_INFO("RX-BUFFER", format("Starting reception, will receive {} samples", num_samps_to_recv))
+    UHD_LOG_INFO("RX-BUFFER", format("Starting reception, will receive {} samples", _config.nsamps))
     UHD_LOG_DEBUG("RX-BUFFER", format("Reception start time: {:.3f} seconds", start_time.get_real_secs()))
 
     // Issue stream command to start reception
@@ -331,14 +345,14 @@ std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer(const uhd::r
     size_t num_samps_received = 0;
 
     // Main reception loop
-    while (not stop_signal_called && (num_samps_received < num_samps_to_recv)) {
+    while (not stop_signal_called && (num_samps_received < _config.nsamps)) {
         std::vector<complexf *> offset_ptrs(rx_stream->get_num_channels());
         for (size_t ch = 0; ch < rx_stream->get_num_channels(); ++ch) {
             offset_ptrs[ch] = buffs[ch].data() + num_samps_received;
         }
 
 
-        size_t num_rx_samps = rx_stream->recv(offset_ptrs, spb, md, timeout);
+        size_t num_rx_samps = rx_stream->recv(offset_ptrs, _config.spb, md, timeout);
 
         if (first_packet) {
             timeout = 0.1; // Reduce timeout after first packet

@@ -9,23 +9,10 @@
 #include <vector>
 #include <future>
 #include <ranges>
-
+#include "usrp_transceiver.h"
 // Complex floating-point type for samples (fc32 format)
 using complexf = std::complex<float>;
 
-struct UsrpConfig {
-    std::string args;
-    std::string clock_source, time_source;
-    std::vector<size_t> tx_channels, rx_channels;
-    size_t spb; // Samples per buffer
-    double rate, rx_bw, tx_bw, delay, freq;
-    size_t nsamps{0}; // Number of samples to receive, 0 means until TX complete
-    std::vector<double> tx_rates, rx_rates;
-    std::vector<std::string> tx_files, rx_files;
-    std::vector<double> tx_freqs, rx_freqs;
-    std::vector<double> tx_gains, rx_gains;
-    std::vector<std::string> tx_ants, rx_ants;
-};
 
 /**
  * Loads data from multiple TX files into a buffer

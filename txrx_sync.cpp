@@ -51,13 +51,10 @@ void sig_int_handler(int) {
 }
 
 
-
-
-
 int UHD_SAFE_MAIN(int argc, char* argv[]) {
     // Initialize USRP device and file parameters
     UsrpConfig config{};
-
+    string args;
     // Program description
     const string program_doc =
             "Simultaneous TX/RX samples from/to file.\nDesigned specifically for multi-channel synchronous transmission and reception\n";
@@ -66,7 +63,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     po::options_description desc("Command line options");
     desc.add_options()
             ("help,h", "Show this help message")
-            ("args", po::value<string>(&config.args)->default_value("addr=192.168.180.2"),
+            ("args", po::value<string>(&args)->default_value("addr=192.168.180.2"),
              "USRP device address string")
             ("tx-files",
              po::value<vector<string> >(&config.tx_files)->multitoken()->default_value(
@@ -110,7 +107,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
              "TX Bandwidth (Hz)")
             ("delay", po::value<double>(&config.delay)->default_value(1),
              "Delay before start (seconds)")
-            ("nsamps", po::value<size_t>(&config.nsamps)->default_value(0),
+            ("nsamps", po::value<size_t>(&config.nsamps)->default_value(5e6),
              "Number of samples to receive, 0 means until TX complete")
             ("clock-source", po::value<string>(&config.clock_source)->default_value("internal"),
              "Reference: internal, external, gpsdo");
@@ -137,8 +134,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     std::signal(SIGINT, &sig_int_handler);
 
 
-    // Create USRP device
-    UHD_LOG_INFO("SYSTEM", format("Creating USRP device with args: {}", config.args));
+
     if (vm.contains("rate")) {
         stdr::fill(config.tx_rates, config.rate);
         stdr::fill(config.rx_rates, config.rate);
@@ -146,34 +142,13 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     }
 
     // Create UsrpTransceiver instance
-    UsrpTransceiver transceiver(config);
+    UsrpTransceiver transceiver(args);
 
-    if (not transceiver.ValidateConfiguration()) {
+    if (not transceiver.ValidateConfiguration(config)) {
         UHD_LOG_ERROR("SYSTEM", "Invalid configuration provided");
         return EXIT_FAILURE;
     }
-    transceiver.ApplyConfiguration();
-
-    // Create TX stream
-    UHD_LOG_TRACE("STREAM", "Creating TX stream");
-    uhd::stream_args_t tx_stream_args("fc32", "sc16");
-    tx_stream_args.channels = config.tx_channels;
-    uhd::tx_streamer::sptr tx_stream = transceiver.get_usrp()->get_tx_stream(tx_stream_args);
-
-    // Create RX stream
-    UHD_LOG_TRACE("STREAM", "Creating RX stream");
-    uhd::stream_args_t rx_stream_args("fc32", "sc16");
-    rx_stream_args.channels = config.rx_channels;
-    uhd::rx_streamer::sptr rx_stream = transceiver.get_usrp()->get_rx_stream(rx_stream_args);
-
-    // Calculate start time
-    uhd::time_spec_t seconds_in_future = transceiver.get_usrp()->get_time_now() + uhd::time_spec_t(config.delay);
-    UHD_LOG_INFO(
-        "SYSTEM",
-        std::format("Start time: {:.3f} seconds in the future (absolute time: {:.6f})", config.delay, seconds_in_future.
-            get_real_secs()));
-
-
+    transceiver.ApplyConfiguration(config);
     // Start transmission thread
     auto TxBuffer = LoadFileToBuffer(config);
 
@@ -181,15 +156,12 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     auto transmit_thread = std::async(std::launch::async,
                                       &UsrpTransceiver::TransmitFromBuffer,
                                       &transceiver,
-                                      tx_stream, std::ref(TxBuffer), config.spb, seconds_in_future
-    );
-    // size_t nums_to_recv = sizes.front() / sizeof(complexf);
+                                      std::ref(TxBuffer));
 
     // Launch receive operation to get buffer via future
     auto receive_future = std::async(std::launch::async,
                                      &UsrpTransceiver::ReceiveToBuffer,
-                                     &transceiver,
-                                     rx_stream, config.spb, seconds_in_future, config.nsamps);
+                                     &transceiver);
 
     // Wait for transmission to complete
     transmit_thread.wait();
