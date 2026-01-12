@@ -75,9 +75,9 @@ struct UsrpConfig {
  * @param config USRP configuration containing the TX file paths
  * @return A vector of vectors containing the loaded complex samples, one per channel
  */
-std::vector<std::vector<complexf>> LoadFileToBuffer(const UsrpConfig &config) {
+std::vector<std::vector<complexf> > LoadFileToBuffer(const UsrpConfig &config) {
     // Create buffers for each channel
-    std::vector<std::vector<complexf>> buffs(config.tx_channels.size());
+    std::vector<std::vector<complexf> > buffs(config.tx_channels.size());
 
     // Load data from input files into buffers
     for (size_t index = 0; index < config.tx_channels.size(); ++index) {
@@ -99,7 +99,7 @@ std::vector<std::vector<complexf>> LoadFileToBuffer(const UsrpConfig &config) {
         }
 
         // Read all samples from the file
-        infile.read(reinterpret_cast<char*>(buffs[index].data()), file_size);
+        infile.read(reinterpret_cast<char *>(buffs[index].data()), file_size);
 
         // Check if read was successful
         if (static_cast<std::uintmax_t>(infile.gcount()) != file_size) {
@@ -126,9 +126,9 @@ std::vector<std::vector<complexf>> LoadFileToBuffer(const UsrpConfig &config) {
  * @param start_time Time specification for when transmission should begin
  */
 void TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream,
-                       std::vector<std::vector<complexf>> &buffs,
-                       size_t spb,
-                       const uhd::time_spec_t &start_time) {
+                        std::vector<std::vector<complexf> > &buffs,
+                        size_t spb,
+                        const uhd::time_spec_t &start_time) {
     // Initialize TX metadata
     uhd::tx_metadata_t md;
     md.start_of_burst = false;
@@ -140,7 +140,7 @@ void TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream,
 
     // Create buffer pointers for transmission
     std::vector<complexf *> buff_ptrs;
-    for (auto &buff : buffs) {
+    for (auto &buff: buffs) {
         buff_ptrs.push_back(buff.data());
     }
 
@@ -169,7 +169,8 @@ void TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream,
         );
 
         if (samps_sent == 0) {
-            UHD_LOG_WARNING("TX-BUFFER", format("send() returned 0 samples [{}/{}]", current_sample_idx, total_samples));
+            UHD_LOG_WARNING("TX-BUFFER",
+                            format("send() returned 0 samples [{}/{}]", current_sample_idx, total_samples));
             continue;
         }
         num_samps_transmitted += samps_sent;
@@ -185,41 +186,28 @@ void TransmitFromBuffer(const uhd::tx_streamer::sptr &tx_stream,
     UHD_LOG_INFO("TX-BUFFER", "Transmit completed! Samples sent: " << num_samps_transmitted);
 }
 
-
 /**
- * Receives samples from USRP to files using a streaming approach
+ * Receives samples from USRP to a buffer using a streaming approach
  *
  * This function receives complex floating-point samples from the USRP device using the
- * provided RX streamer and writes them to specified files. The function streams until
+ * provided RX streamer and stores them in a buffer. The function streams until
  * the specified number of samples have been received or the stop signal is called.
  *
  * @param rx_stream RX streamer to receive samples from the USRP
- * @param filenames Vector of file paths to save the received fc32 format samples
  * @param spb Samples per buffer - number of samples to process in each iteration
  * @param start_time Time specification for when reception should begin
  * @param num_samps_to_recv Total number of samples to receive before stopping
+ * @return A vector of vectors containing the received complex samples, one per channel
  */
-void ReceiveToFileWorker(const uhd::rx_streamer::sptr &rx_stream, const std::vector<std::string> &filenames,
-                         size_t spb,
-                         const uhd::time_spec_t &start_time, size_t num_samps_to_recv) {
-    // Create output files for each channel
-    std::vector<std::shared_ptr<std::ofstream> > outfiles;
-
-    for (auto &file: filenames) {
-        outfiles.push_back(std::make_shared<std::ofstream>(file, std::ofstream::binary));
-
-        if (not outfiles.back()->is_open()) {
-            UHD_LOG_ERROR("RX-STREAM", format("Cannot open receive file: {}" , file));
-            throw std::runtime_error("Cannot open receive file:" + file);
-        }
-        UHD_LOG_INFO("RX-STREAM", format("Rx channel saving to file: {}", file));
-    }
-
+std::vector<std::vector<complexf> > ReceiveToBuffer(const uhd::rx_streamer::sptr &rx_stream,
+                                                    size_t spb,
+                                                    const uhd::time_spec_t &start_time,
+                                                    size_t num_samps_to_recv) {
     // Create buffers for each channel
-    std::vector<std::vector<complexf> > buffs(rx_stream->get_num_channels(), std::vector<complexf>(spb));
+    std::vector<std::vector<complexf> > buffs(rx_stream->get_num_channels(), std::vector<complexf>(num_samps_to_recv));
     std::vector<complexf *> buff_ptrs;
     for (auto &buff: buffs) {
-        buff_ptrs.push_back(&buff.front());
+        buff_ptrs.push_back(buff.data());
     }
 
     // Initialize reception parameters
@@ -230,8 +218,8 @@ void ReceiveToFileWorker(const uhd::rx_streamer::sptr &rx_stream, const std::vec
     stream_cmd.stream_now = false;
     stream_cmd.time_spec = start_time;
 
-    UHD_LOG_INFO("RX-STREAM", "Starting reception, will receive " << num_samps_to_recv << " samples")
-    UHD_LOG_DEBUG("RX-STREAM", "Reception start time: " << start_time.get_real_secs() << " seconds")
+    UHD_LOG_INFO("RX-BUFFER", format("Starting reception, will receive {} samples", num_samps_to_recv))
+    UHD_LOG_DEBUG("RX-BUFFER", format("Reception start time: {:.3f} seconds", start_time.get_real_secs()))
 
     // Issue stream command to start reception
     rx_stream->issue_stream_cmd(stream_cmd);
@@ -241,7 +229,13 @@ void ReceiveToFileWorker(const uhd::rx_streamer::sptr &rx_stream, const std::vec
 
     // Main reception loop
     while (not stop_signal_called && (num_samps_received < num_samps_to_recv)) {
-        size_t num_rx_samps = rx_stream->recv(buff_ptrs, spb, md, timeout);
+        std::vector<complexf *> offset_ptrs(rx_stream->get_num_channels());
+        for (size_t ch = 0; ch < rx_stream->get_num_channels(); ++ch) {
+            offset_ptrs[ch] = buffs[ch].data() + num_samps_received;
+        }
+
+
+        size_t num_rx_samps = rx_stream->recv(offset_ptrs, spb, md, timeout);
 
         if (first_packet) {
             timeout = 0.1; // Reduce timeout after first packet
@@ -250,23 +244,60 @@ void ReceiveToFileWorker(const uhd::rx_streamer::sptr &rx_stream, const std::vec
 
         // Handle different error conditions
         if (md.error_code == uhd::rx_metadata_t::ERROR_CODE_TIMEOUT) {
-            UHD_LOG_WARNING("RX-STREAM", "RX channel received timeout.");
+            UHD_LOG_WARNING("RX-BUFFER", "RX channel received timeout.");
             continue;
         }
         if (md.error_code == uhd::rx_metadata_t::ERROR_CODE_OVERFLOW) {
-            UHD_LOG_WARNING("RX-STREAM", "RX channel received overflow.");
+            UHD_LOG_WARNING("RX-BUFFER", "RX channel received overflow.");
             continue;
         }
         if (md.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) {
-            UHD_LOG_ERROR("RX-STREAM", "RX channel received error: " << md.strerror());
+            UHD_LOG_ERROR("RX-BUFFER", "RX channel received error: " << md.strerror());
             throw std::runtime_error("Receive error: " + md.strerror());
         }
 
-        // Write received samples to output files
-        for (auto i = 0; i < outfiles.size(); ++i) {
-            outfiles[i]->write(reinterpret_cast<char *>(buffs[i].data()), num_rx_samps * sizeof(complexf));
-        }
         num_samps_received += num_rx_samps;
+    }
+
+    UHD_LOG_INFO("RX-BUFFER", "Receive completed! Samples received: " << num_samps_received);
+
+    // Resize buffers to actual received sample count
+    for (auto &buff: buffs) {
+        buff.resize(num_samps_received);
+    }
+
+    return buffs;
+}
+
+/**
+ * Writes samples from a buffer to files
+ *
+ * This function takes complex floating-point samples from a buffer and writes them
+ * to specified files. Each channel's samples are written to its corresponding file.
+ *
+ * @param config USRP configuration containing the RX file paths
+ * @param buffs Buffer containing complex samples organized by channel
+ */
+void WriteBufferToFile(const UsrpConfig &config, const std::vector<std::vector<complexf> > &buffs) {
+    // Create output files for each channel
+    std::vector<std::shared_ptr<std::ofstream> > outfiles;
+
+    for (const auto &rx_file: config.rx_files) {
+        outfiles.push_back(std::make_shared<std::ofstream>(rx_file, std::ofstream::binary));
+
+        if (not outfiles.back()->is_open()) {
+            UHD_LOG_ERROR("BUFFER-WRITE", format("Cannot open receive file: {}" , rx_file));
+            throw std::runtime_error("Cannot open receive file: " + rx_file);
+        }
+        UHD_LOG_INFO("BUFFER-WRITE", format("Rx channel saving to file: {}", rx_file));
+    }
+
+    // Write samples from buffer to files
+    for (size_t i = 0; i < outfiles.size(); ++i) {
+        if (i < buffs.size()) {
+            outfiles[i]->write(reinterpret_cast<const char *>(buffs[i].data()),
+                               buffs[i].size() * sizeof(complexf));
+        }
     }
 
     // Close all output files
@@ -276,8 +307,38 @@ void ReceiveToFileWorker(const uhd::rx_streamer::sptr &rx_stream, const std::vec
         }
     }
 
-    UHD_LOG_INFO("RX-STREAM", "Receive completed! Samples received: " << num_samps_received);
+    UHD_LOG_INFO("BUFFER-WRITE", "Write completed! Files written: " << outfiles.size());
 }
+
+
+// /**
+//  * Receives samples from USRP to files using a streaming approach
+//  *
+//  * This function receives complex floating-point samples from the USRP device using the
+//  * provided RX streamer and writes them to specified files. The function streams until
+//  * the specified number of samples have been received or the stop signal is called.
+//  *
+//  * @param rx_stream RX streamer to receive samples from the USRP
+//  * @param filenames Vector of file paths to save the received fc32 format samples
+//  * @param spb Samples per buffer - number of samples to process in each iteration
+//  * @param start_time Time specification for when reception should begin
+//  * @param num_samps_to_recv Total number of samples to receive before stopping
+//  */
+// void ReceiveToFileWorker(const uhd::rx_streamer::sptr &rx_stream, const std::vector<std::string> &filenames,
+//                          size_t spb,
+//                          const uhd::time_spec_t &start_time, size_t num_samps_to_recv) {
+//     // Create a temporary config object to pass to WriteBufferToFile
+//     UsrpConfig temp_config;
+//     temp_config.rx_files = filenames;
+//     temp_config.rx_channels.resize(filenames.size());
+//     std::iota(temp_config.rx_channels.begin(), temp_config.rx_channels.end(), 0); // Fill with 0, 1, 2, ...
+//
+//     // Receive samples to buffer
+//     auto buffs = ReceiveToBuffer(rx_stream, spb, start_time, num_samps_to_recv);
+//
+//     // Write buffer to files
+//     WriteBufferToFile(temp_config, buffs);
+// }
 
 
 bool ValidateUsrpConfiguration(const UsrpConfig &config, const uhd::usrp::multi_usrp::sptr &usrp) {
@@ -638,13 +699,18 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
     );
     // size_t nums_to_recv = sizes.front() / sizeof(complexf);
 
-    auto receive_thread = std::async(std::launch::async, ReceiveToFileWorker,
-                                     rx_stream, config.rx_files, config.spb, seconds_in_future, config.nsamps);
+    // Launch receive operation to get buffer via future
+    auto receive_future = std::async(std::launch::async, ReceiveToBuffer,
+                                     rx_stream, config.spb, seconds_in_future, config.nsamps);
 
-    // Wait for both threads to complete
-    UHD_LOG_TRACE("SYSTEM", "Waiting for TX and RX threads to complete");
+    // Wait for transmission to complete
     transmit_thread.wait();
-    receive_thread.wait();
+
+    // Get the received buffer from the future
+    auto RxBuffer = receive_future.get();
+
+    // Write the received buffer to files
+    WriteBufferToFile(config, RxBuffer);
 
     stop_signal_called = true;
     UHD_LOG_INFO("SYSTEM", "TX-RX operation finished!")
