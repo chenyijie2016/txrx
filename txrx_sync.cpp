@@ -23,6 +23,7 @@
 #include <future>
 #include <ranges>
 #include <numeric>  // for std::iota
+#include "utils.h"
 
 
 namespace po = boost::program_options;
@@ -36,10 +37,6 @@ using std::string;
 using std::complex;
 using std::format;
 
-
-// Complex floating-point type for samples (fc32 format)
-using complexf = std::complex<float>;
-
 // External global flag for signal handling (defined in workers.cpp)
 std::atomic<bool> stop_signal_called{false};
 
@@ -50,67 +47,6 @@ std::atomic<bool> stop_signal_called{false};
 void sig_int_handler(int) {
     stop_signal_called = true;
     UHD_LOG_INFO("SIGNAL", "SIGINT received, stopping...")
-}
-
-struct UsrpConfig {
-    string args;
-    string clock_source, time_source;
-    vector<size_t> tx_channels, rx_channels;
-    size_t spb; // Samples per buffer
-    double rate, rx_bw, tx_bw, delay, freq;
-    size_t nsamps{0}; // Number of samples to receive, 0 means until TX complete
-    vector<double> tx_rates, rx_rates;
-    vector<string> tx_files, rx_files;
-    vector<double> tx_freqs, rx_freqs;
-    vector<double> tx_gains, rx_gains;
-    vector<string> tx_ants, rx_ants;
-};
-
-/**
- * Loads data from multiple TX files into a buffer
- *
- * This function reads complex floating-point samples from specified files and loads them
- * into a buffer organized by channel. Each channel has its own vector of complex samples.
- *
- * @param config USRP configuration containing the TX file paths
- * @return A vector of vectors containing the loaded complex samples, one per channel
- */
-std::vector<std::vector<complexf> > LoadFileToBuffer(const UsrpConfig &config) {
-    // Create buffers for each channel
-    std::vector<std::vector<complexf> > buffs(config.tx_channels.size());
-
-    // Load data from input files into buffers
-    for (size_t index = 0; index < config.tx_channels.size(); ++index) {
-        // Get file size using std::filesystem
-        std::uintmax_t file_size = fs::file_size(config.tx_files[index]);
-
-        // Calculate number of complex samples
-        std::uintmax_t num_samples = file_size / sizeof(complexf);
-
-        // Resize buffer to accommodate all samples
-        buffs[index].resize(num_samples);
-
-        // Open input file and read all samples
-        std::ifstream infile(config.tx_files[index], std::ios::binary);
-
-        if (!infile.is_open()) {
-            UHD_LOG_ERROR("BUFFER-LOAD", format("Cannot open TX file: {}", config.tx_files[index]));
-            throw std::runtime_error("Cannot open TX file: " + config.tx_files[index]);
-        }
-
-        // Read all samples from the file
-        infile.read(reinterpret_cast<char *>(buffs[index].data()), file_size);
-
-        // Check if read was successful
-        if (static_cast<std::uintmax_t>(infile.gcount()) != file_size) {
-            UHD_LOG_WARNING("BUFFER-LOAD", format("Incomplete read for TX file: {}", config.tx_files[index]));
-        }
-
-        infile.close();
-    }
-
-    UHD_LOG_INFO("BUFFER-LOAD", format("Loaded {} channels of TX data", buffs.size()));
-    return buffs;
 }
 
 /**
@@ -268,77 +204,6 @@ std::vector<std::vector<complexf> > ReceiveToBuffer(const uhd::rx_streamer::sptr
 
     return buffs;
 }
-
-/**
- * Writes samples from a buffer to files
- *
- * This function takes complex floating-point samples from a buffer and writes them
- * to specified files. Each channel's samples are written to its corresponding file.
- *
- * @param config USRP configuration containing the RX file paths
- * @param buffs Buffer containing complex samples organized by channel
- */
-void WriteBufferToFile(const UsrpConfig &config, const std::vector<std::vector<complexf> > &buffs) {
-    // Create output files for each channel
-    std::vector<std::shared_ptr<std::ofstream> > outfiles;
-
-    for (const auto &rx_file: config.rx_files) {
-        outfiles.push_back(std::make_shared<std::ofstream>(rx_file, std::ofstream::binary));
-
-        if (not outfiles.back()->is_open()) {
-            UHD_LOG_ERROR("BUFFER-WRITE", format("Cannot open receive file: {}" , rx_file));
-            throw std::runtime_error("Cannot open receive file: " + rx_file);
-        }
-        UHD_LOG_INFO("BUFFER-WRITE", format("Rx channel saving to file: {}", rx_file));
-    }
-
-    // Write samples from buffer to files
-    for (size_t i = 0; i < outfiles.size(); ++i) {
-        if (i < buffs.size()) {
-            outfiles[i]->write(reinterpret_cast<const char *>(buffs[i].data()),
-                               buffs[i].size() * sizeof(complexf));
-        }
-    }
-
-    // Close all output files
-    for (auto &outfile: outfiles) {
-        if (outfile->is_open()) {
-            outfile->close();
-        }
-    }
-
-    UHD_LOG_INFO("BUFFER-WRITE", "Write completed! Files written: " << outfiles.size());
-}
-
-
-// /**
-//  * Receives samples from USRP to files using a streaming approach
-//  *
-//  * This function receives complex floating-point samples from the USRP device using the
-//  * provided RX streamer and writes them to specified files. The function streams until
-//  * the specified number of samples have been received or the stop signal is called.
-//  *
-//  * @param rx_stream RX streamer to receive samples from the USRP
-//  * @param filenames Vector of file paths to save the received fc32 format samples
-//  * @param spb Samples per buffer - number of samples to process in each iteration
-//  * @param start_time Time specification for when reception should begin
-//  * @param num_samps_to_recv Total number of samples to receive before stopping
-//  */
-// void ReceiveToFileWorker(const uhd::rx_streamer::sptr &rx_stream, const std::vector<std::string> &filenames,
-//                          size_t spb,
-//                          const uhd::time_spec_t &start_time, size_t num_samps_to_recv) {
-//     // Create a temporary config object to pass to WriteBufferToFile
-//     UsrpConfig temp_config;
-//     temp_config.rx_files = filenames;
-//     temp_config.rx_channels.resize(filenames.size());
-//     std::iota(temp_config.rx_channels.begin(), temp_config.rx_channels.end(), 0); // Fill with 0, 1, 2, ...
-//
-//     // Receive samples to buffer
-//     auto buffs = ReceiveToBuffer(rx_stream, spb, start_time, num_samps_to_recv);
-//
-//     // Write buffer to files
-//     WriteBufferToFile(temp_config, buffs);
-// }
 
 
 bool ValidateUsrpConfiguration(const UsrpConfig &config, const uhd::usrp::multi_usrp::sptr &usrp) {
@@ -512,7 +377,7 @@ void ApplyUsrpConfiguration(const UsrpConfig &config, const uhd::usrp::multi_usr
 
     usrp->clear_command_time(uhd::usrp::multi_usrp::ALL_MBOARDS);
 
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(100ms);
 
     for (const size_t ch: config.tx_channels) {
         UHD_LOG_INFO("CONFIG", std::format("Tx channel {} freq set to {:.3f} MHz", ch, usrp->get_tx_freq(ch)/1e6));
