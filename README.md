@@ -16,12 +16,15 @@ This project implements a Software Defined Radio (SDR) application that enables 
 - Integrated worker implementations for file I/O and streaming in main application
 - Structured configuration management for USRP parameters
 - Graceful shutdown handling with signal processing
+- Improved encapsulation with UsrpTransceiver class
 
 ## Project Structure
 
 ### Core Components
 
 - `txrx_sync.cpp` - Main application implementing simultaneous TX/RX functionality with file I/O and integrated worker functions
+- `usrp_transceiver.cpp` / `usrp_transceiver.h` - USRP device management and configuration handling
+- `utils.cpp` / `utils.h` - Utility functions for file I/O operations
 - `net.sh` - System network buffer configuration script
 - `CMakeLists.txt` - Build configuration
 
@@ -81,7 +84,7 @@ make
 | `--rx-bw` | RX Bandwidth (Hz) | N/A |
 | `--tx-bw` | TX Bandwidth (Hz) | N/A |
 | `--delay` | Delay before start (seconds) | `1` |
-| `--nsamps` | Number of samples to receive, 0 means until TX complete | `0` |
+| `--nsamps` | Number of samples to receive, 0 means until TX complete | `5e6` |
 | `--clock-source` | Reference: internal, external, gpsdo | `"internal"` |
 
 ### Example Usage
@@ -127,6 +130,15 @@ This script increases the network buffer sizes to improve data throughput betwee
 
 The application handles SIGINT (Ctrl+C) for graceful shutdown. During execution, press Ctrl+C to stop the process safely, which will properly clean up resources and terminate worker threads.
 
+## Architecture Improvements
+
+Recent updates have improved the architecture of the application:
+
+- **UsrpTransceiver Class**: Encapsulates USRP device management, configuration validation, and transmission/reception operations
+- **Configuration Management**: The `UsrpConfig` struct centralizes all USRP configuration parameters
+- **Elimination of Global Variables**: The `stop_signal_called` variable is now passed as a parameter to the UsrpTransceiver constructor instead of using a global variable, improving encapsulation and thread safety
+- **Streamlined Interface**: The transmit and receive methods now use internal configuration rather than requiring parameters to be passed externally
+
 ## Troubleshooting
 
 - **Device not found**: Verify USRP address in `--args` parameter and network connectivity
@@ -147,5 +159,6 @@ The project follows these key design principles:
 - Consistent parameter validation
 - Clear organization of USRP configuration parameters using structured configuration
 - Support for multi-channel operations
+- Improved encapsulation with the UsrpTransceiver class
 
 For development, please follow existing code style and maintain thread safety in worker functions.
