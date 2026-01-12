@@ -1,3 +1,0 @@
-/home/cyj/CLionProjects/uhd_test/build/CMakeFiles/txrx_sync.dir
-/home/cyj/CLionProjects/uhd_test/build/CMakeFiles/edit_cache.dir
-/home/cyj/CLionProjects/uhd_test/build/CMakeFiles/rebuild_cache.dir

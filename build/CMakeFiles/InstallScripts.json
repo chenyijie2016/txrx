@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/cyj/CLionProjects/uhd_test/build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
