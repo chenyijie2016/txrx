@@ -20,7 +20,7 @@ endif()
 # Choose a static or shared-library build (shared is default, and static will
 # probably need some special care!)
 # Set this to ON in order to link a static build of UHD:
-option(UHD_USE_STATIC_LIBS ON)
+option(UHD_USE_STATIC_LIBS OFF)
 
 # To add UHD as a dependency to this project, add a line such as this:
 find_package(UHD 4.9.0 REQUIRED)
@@ -39,8 +39,19 @@ set(UHD_BOOST_REQUIRED_COMPONENTS
 )
 include(UHDBoost)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZMQ REQUIRED libzmq)
+find_package(nlohmann_json REQUIRED)
+
 ### Make the executable #######################################################
 add_executable(txrx_sync txrx_sync.cpp utils.cpp usrp_transceiver.cpp)
+add_executable(txrx_server utils.cpp usrp_transceiver.cpp server.cpp)
+
+target_include_directories(txrx_server
+        PRIVATE
+        ${Boost_INCLUDE_DIRS}
+        ${ZMQ_INCLUDE_DIRS}
+)
 
 set(CMAKE_BUILD_TYPE "Release")
 message(STATUS "******************************************************************************")
@@ -55,6 +66,8 @@ message(STATUS "****************************************************************
 if(NOT UHD_USE_STATIC_LIBS)
     message(STATUS "Linking against shared UHD library.")
     target_link_libraries(txrx_sync  PUBLIC uhd Boost::program_options)
+    target_link_libraries(txrx_server  PUBLIC uhd Boost::program_options nlohmann_json::nlohmann_json
+            ${ZMQ_LIBRARIES})
     # Shared library case: All we need to do is link against the library, and
     # anything else we need (in this case, some Boost libraries):
 else(NOT UHD_USE_STATIC_LIBS)

@@ -14,12 +14,8 @@
 #include "utils.h"
 
 namespace po = boost::program_options;
-namespace fs = std::filesystem;
 namespace stdr = std::ranges;
-namespace stdv = std::views;
 
-using namespace std::chrono_literals;
-using std::complex;
 using std::format;
 using std::string;
 using std::vector;
