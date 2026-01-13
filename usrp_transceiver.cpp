@@ -22,7 +22,7 @@ UsrpTransceiver::UsrpTransceiver(const std::string &args) {
 }
 
 
-bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config) {
+bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config, const bool require_file) {
     // Check channel validity
     size_t total_tx_channels = usrp->get_tx_num_channels();
     size_t total_rx_channels = usrp->get_rx_num_channels();
@@ -51,19 +51,30 @@ bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config) {
     if (stdr::any_of(config.rx_channels, [&](const auto &ch) { return ch >= total_rx_channels; })) {
         UHD_LOG_ERROR("CHECK", "RX channels are not supported");
     }
-    std::vector<size_t> tx_sizes = {config.tx_channels.size(), config.tx_files.size(), config.tx_ants.size(), config.tx_gains.size(), config.tx_freqs.size()};
+    std::vector<size_t> tx_sizes = {config.tx_channels.size(), config.tx_ants.size(), config.tx_gains.size(), config.tx_freqs.size()};
     if (stdr::adjacent_find(tx_sizes, std::not_equal_to{}) != tx_sizes.end()) {
         UHD_LOG_ERROR("CHECK", "Tx configurations mismatch!");
         return false;
     }
 
-    std::vector<size_t> rx_sizes = {config.rx_channels.size(), config.rx_files.size(), config.rx_ants.size(), config.rx_gains.size(), config.rx_freqs.size()};
+    std::vector<size_t> rx_sizes = {config.rx_channels.size(), config.rx_ants.size(), config.rx_gains.size(), config.rx_freqs.size()};
     if (stdr::adjacent_find(rx_sizes, std::not_equal_to{}) != rx_sizes.end()) {
         UHD_LOG_ERROR("CHECK", "Rx configurations mismatch!");
         return false;
     }
 
-
+    if (require_file) {
+        if (config.tx_files.size() != config.tx_channels.size()) {
+            UHD_LOG_ERROR("CHECK", "Tx files check failed");
+            return false;
+        }
+        if (config.rx_files.size() != config.rx_channels.size()) {
+            UHD_LOG_ERROR("CHECK", "Rx files check failed");
+            return false;
+        }
+    } else {
+        return true;
+    }
     // Verify TX input files exist
     if (not stdr::all_of(config.tx_files, [](const std::string &filename) { return fs::exists(filename); })) {
         UHD_LOG_ERROR("CHECK", "TX input files do not exist!")
@@ -78,7 +89,6 @@ bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config) {
         UHD_LOG_ERROR("CHECK", "Tx file sizes mismatch")
         return false;
     }
-    UHD_LOG_INFO("CHECK", "The input parameters appear to be correct.")
     return true;
 }
 

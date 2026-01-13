@@ -43,7 +43,7 @@ public:
      * Validates the USRP configuration
      * @return true if configuration is valid, false otherwise
      */
-    bool ValidateConfiguration(const UsrpConfig &config);
+    bool ValidateConfiguration(const UsrpConfig &config,const bool require_file=true);
 
     /**
      * Applies the USRP configuration to the device

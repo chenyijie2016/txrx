@@ -89,7 +89,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
                 UsrpConfig config = req_json.at("config").get<UsrpConfig>();
                 string tx_shm_name = req_json.at("tx_shm_name").get<string>();
 
-                if (transceiver.ValidateConfiguration(config)) {
+                if (transceiver.ValidateConfiguration(config, false)) {
                     transceiver.ApplyConfiguration(config);
                 } else {
                     reply["status"] = "FAILED";
