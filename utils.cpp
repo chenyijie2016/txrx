@@ -1,5 +1,8 @@
 #include "utils.h"
 
+#include <fstream>
+#include <filesystem>
+
 namespace fs = std::filesystem;
 using std::vector;
 using std::string;

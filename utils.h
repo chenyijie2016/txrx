@@ -1,14 +1,8 @@
 #pragma once
 #include <uhd/usrp/multi_usrp.hpp>
-#include <format>
 #include <complex>
 #include <csignal>
-#include <filesystem>
-#include <fstream>
-#include <memory>
 #include <vector>
-#include <future>
-#include <ranges>
 #include "usrp_transceiver.h"
 // Complex floating-point type for samples (fc32 format)
 using complexf = std::complex<float>;

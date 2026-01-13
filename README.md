@@ -17,23 +17,31 @@ This project implements a Software Defined Radio (SDR) application that enables 
 - Structured configuration management for USRP parameters
 - Graceful shutdown handling with signal processing
 - Improved encapsulation with UsrpTransceiver class
+- IPC server for remote control via Python clients
+- ZeroMQ-based communication protocol
+- Shared memory for efficient data transfer
 
 ## Project Structure
 
 ### Core Components
 
 - `txrx_sync.cpp` - Main application implementing simultaneous TX/RX functionality with file I/O and integrated worker functions
+- `server.cpp` - IPC server for remote control via Python clients using ZeroMQ and shared memory
 - `usrp_transceiver.cpp` / `usrp_transceiver.h` - USRP device management and configuration handling
 - `utils.cpp` / `utils.h` - Utility functions for file I/O operations
+- `ipc.py` - Python client example for controlling USRP operations via IPC
 - `net.sh` - System network buffer configuration script
 - `CMakeLists.txt` - Build configuration
 
 ## Dependencies
 
 - UHD (USRP Hardware Driver) 4.9.0 or later
-- Boost libraries (program_options, thread, system)
-- C++17 compiler or later
+- Boost libraries (program_options, thread, system, interprocess)
+- ZeroMQ (libzmq) for IPC communication
+- nlohmann/json for JSON serialization
+- C++23 compiler or later
 - USRP hardware device (e.g., X310, B210)
+- Python 3.x with pyzmq and numpy for Python client
 
 ## Building
 
@@ -43,6 +51,10 @@ cd build
 cmake ..
 make
 ```
+
+This creates two executables:
+- `txrx_sync` - Original command-line application
+- `txrx_server` - IPC server for remote control via Python clients
 
 Or using the cmake-build-debug directory:
 
@@ -59,6 +71,79 @@ make
 ```bash
 ./txrx_sync --tx-files tx_data.fc32 --rx-files rx_data.fc32 --freq 915e6 --rate 5e6
 ```
+
+### IPC Server Usage
+
+The project includes an IPC server that allows remote control of USRP operations via Python clients:
+
+#### Starting the IPC Server
+
+```bash
+./txrx_server --args "addr=192.168.180.2" --port 5555
+```
+
+#### Python Client Example
+
+The `ipc.py` file provides an example of how to communicate with the server:
+
+```python
+import zmq
+import json
+import numpy as np
+from multiprocessing import shared_memory
+
+# Connect to the server
+context = zmq.Context()
+socket = context.socket(zmq.REQ)
+socket.connect("tcp://localhost:5555")
+
+# Prepare configuration and data
+config = {
+    "tx_channels": [0],
+    "rx_channels": [1],
+    "tx_rates": [1e6],
+    "rx_rates": [1e6],
+    "tx_freqs": [915e6],
+    "rx_freqs": [915e6],
+    "tx_gains": [10.0],
+    "rx_gains": [10.0],
+    "tx_ants": ["TX/RX"],
+    "rx_ants": ["RX2"],
+    "spb": 2500,
+    "delay": 1.0,
+    "nsamps": 10000,
+    "clock_source": "internal",
+    "time_source": "internal"
+}
+
+# Create TX data in shared memory
+tx_data = np.exp(1j * 2 * np.pi * np.arange(10000) * 0.1)  # Example complex data
+tx_data_bytes = tx_data.astype(np.complex64).tobytes()
+shm = shared_memory.SharedMemory(create=True, size=len(tx_data_bytes), name="usrp_tx_shm")
+shm.buf[:len(tx_data_bytes)] = tx_data_bytes
+
+# Send EXECUTE command
+request = {
+    "cmd": "EXECUTE",
+    "config": config,
+    "tx_shm_name": "usrp_tx_shm"
+}
+
+socket.send_string(json.dumps(request))
+response = socket.recv_string()
+print(f"Server response: {response}")
+
+# Cleanup
+shm.close()
+shm.unlink()
+socket.close()
+context.term()
+```
+
+#### Available Commands
+
+- `EXECUTE`: Execute a TX/RX operation with the provided configuration and data
+- `RELEASE`: Release shared memory resources
 
 ### Command Line Options
 
@@ -138,6 +223,9 @@ Recent updates have improved the architecture of the application:
 - **Configuration Management**: The `UsrpConfig` struct centralizes all USRP configuration parameters
 - **Elimination of Global Variables**: The `stop_signal_called` variable is now passed as a parameter to the UsrpTransceiver constructor instead of using a global variable, improving encapsulation and thread safety
 - **Streamlined Interface**: The transmit and receive methods now use internal configuration rather than requiring parameters to be passed externally
+- **IPC Server Architecture**: Implements a robust communication protocol using ZeroMQ for commands and shared memory for data transfer
+- **Python Integration**: Enables remote control of USRP operations from Python environments
+- **Efficient Data Transfer**: Uses shared memory for high-performance data exchange between processes
 
 ## Troubleshooting
 
