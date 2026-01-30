@@ -40,22 +40,17 @@ set(UHD_BOOST_REQUIRED_COMPONENTS
         program_options
 )
 include(UHDBoost)
-#if (LINUX)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(ZMQ REQUIRED libzmq)
-#elseif (APPLE)
-#    find_package(PkgConfig REQUIRED)
-#    pkg_check_modules(ZeroMQ REQUIRED libzmq)
-#    find_path(CPPZMQ_INCLUDE_DIR zmq.hpp)
-#endif ()
-find_package(nlohmann_json REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZMQ REQUIRED libzmq)
 
+find_package(nlohmann_json REQUIRED)
+find_package(Protobuf REQUIRED)
 # Find Boost Interprocess library
 find_package(Boost REQUIRED COMPONENTS thread)
 
 ### Make the executable #######################################################
 add_executable(txrx_sync txrx_sync.cpp utils.cpp usrp_transceiver.cpp)
-add_executable(txrx_server utils.cpp usrp_transceiver.cpp server.cpp)
+add_executable(txrx_server utils.cpp usrp_transceiver.cpp server.cpp usrp_protocol.pb.cc)
 
 target_include_directories(txrx_server
         PRIVATE
@@ -91,6 +86,7 @@ if (NOT UHD_USE_STATIC_LIBS)
             ${UHD_LIBRARIES}
             Boost::program_options
             nlohmann_json::nlohmann_json
+            ${Protobuf_LIBRARIES}
             ${ZMQ_LIBRARIES}
             ${Boost_LIBRARIES}
     )

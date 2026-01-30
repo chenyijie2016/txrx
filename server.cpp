@@ -6,19 +6,19 @@
 #include <csignal>
 #include <format>
 #include <future>
-#include <nlohmann/json.hpp>
 #include <uhd/convert.hpp>
 #include <uhd/exception.hpp>
 #include <uhd/usrp/multi_usrp.hpp>
 #include <uhd/utils/safe_main.hpp>
 #include <vector>
 #include <zmq.hpp>
+#include "usrp_protocol.pb.h"
 #include "usrp_transceiver.h"
 
 
 namespace po = boost::program_options;
 namespace bip = boost::interprocess;
-using json = nlohmann::json;
+
 using std::string;
 
 // Global flag for signal handling
@@ -29,26 +29,46 @@ void sig_int_handler(int) {
     UHD_LOG_INFO("SIGNAL", "SIGINT received, stopping...")
 }
 
-// Custom JSON deserializer for UsrpConfig
-void from_json(const json &j, UsrpConfig &c) {
-    j.at("tx_channels").get_to(c.tx_channels);
-    j.at("rx_channels").get_to(c.rx_channels);
-    j.at("spb").get_to(c.spb);
-    j.at("delay").get_to(c.delay);
-    j.at("nsamps").get_to(c.nsamps);
-    j.at("tx_rates").get_to(c.tx_rates);
-    j.at("rx_rates").get_to(c.rx_rates);
-    j.at("tx_freqs").get_to(c.tx_freqs);
-    j.at("rx_freqs").get_to(c.rx_freqs);
-    j.at("tx_gains").get_to(c.tx_gains);
-    j.at("rx_gains").get_to(c.rx_gains);
-    j.at("tx_ants").get_to(c.tx_ants);
-    j.at("rx_ants").get_to(c.rx_ants);
-    j.at("clock_source").get_to(c.clock_source);
-    j.at("time_source").get_to(c.time_source);
+/**
+ * 辅助函数：将 Protobuf 配置对象转换为 C++ 原生结构体
+ * 这使得我们可以保持 UsrpTransceiver 类不做修改
+ */
+UsrpConfig ConvertConfig(const usrp_proto::UsrpConfig &proto_cfg) {
+    UsrpConfig c;
+    c.clock_source = proto_cfg.clock_source();
+    c.time_source = proto_cfg.time_source();
+    c.spb = proto_cfg.spb();
+    c.delay = proto_cfg.delay();
+    c.nsamps = proto_cfg.nsamps();
+
+    // Helper lambda to copy repeated fields to std::vector
+    auto copy_vec = [](const auto &proto_vec) {
+        return std::vector<typename std::decay_t<decltype(proto_vec)>::value_type>(proto_vec.begin(), proto_vec.end());
+    };
+
+    // 显式转换类型不匹配的字段 (protobuf repeated uint32 -> vector<size_t>)
+    c.tx_channels.assign(proto_cfg.tx_channels().begin(), proto_cfg.tx_channels().end());
+    c.rx_channels.assign(proto_cfg.rx_channels().begin(), proto_cfg.rx_channels().end());
+
+    // 直接复制匹配的字段
+    c.tx_rates = copy_vec(proto_cfg.tx_rates());
+    c.rx_rates = copy_vec(proto_cfg.rx_rates());
+    c.tx_freqs = copy_vec(proto_cfg.tx_freqs());
+    c.rx_freqs = copy_vec(proto_cfg.rx_freqs());
+    c.tx_gains = copy_vec(proto_cfg.tx_gains());
+    c.rx_gains = copy_vec(proto_cfg.rx_gains());
+    c.tx_ants = copy_vec(proto_cfg.tx_ants());
+    c.rx_ants = copy_vec(proto_cfg.rx_ants());
+    c.tx_files = copy_vec(proto_cfg.tx_files());
+    c.rx_files = copy_vec(proto_cfg.rx_files());
+
+    return c;
 }
 
 int UHD_SAFE_MAIN(int argc, char *argv[]) {
+    // 验证 Protobuf 库版本兼容性
+    GOOGLE_PROTOBUF_VERIFY_VERSION;
+
     string args;
     uint16_t port;
 
@@ -76,24 +96,43 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
     UHD_LOG_INFO("SERVER", std::format("ZMQ Server live on port {}", port));
 
     while (not stop_signal_called) {
-        zmq::message_t request;
-        if (auto res = sock.recv(request, zmq::recv_flags::none); !res)
+        zmq::message_t request_msg;
+        if (auto res = sock.recv(request_msg, zmq::recv_flags::none); !res)
             continue;
 
-        json req_json = json::parse(request.to_string());
-        string cmd = req_json.value("cmd", "");
-        json reply;
+        // --- 1. 解析 Protobuf 请求 ---
+        usrp_proto::Request req_proto;
+        usrp_proto::Response reply_proto;
+
+        // 默认状态
+        reply_proto.set_status(usrp_proto::STATUS_UNKNOWN);
+
+        bool parse_success = req_proto.ParseFromArray(request_msg.data(), request_msg.size());
+
+        if (!parse_success) {
+            UHD_LOG_ERROR("SERVER", "Failed to parse Protobuf message");
+            reply_proto.set_status(usrp_proto::ERROR);
+            reply_proto.set_msg("Protobuf parse error");
+            string serialized_reply;
+            reply_proto.SerializeToString(&serialized_reply);
+            sock.send(zmq::buffer(serialized_reply), zmq::send_flags::none);
+            continue;
+        }
+
 
         try {
-            if (cmd == "EXECUTE") {
-                UsrpConfig config = req_json.at("config").get<UsrpConfig>();
-                string tx_shm_name = req_json.at("tx_shm_name").get<string>();
+            if (req_proto.cmd() == usrp_proto::EXECUTE) {
+                UsrpConfig config = ConvertConfig(req_proto.config());
+                string tx_shm_name = req_proto.tx_shm_name();
 
                 if (transceiver.ValidateConfiguration(config, false)) {
                     transceiver.ApplyConfiguration(config);
                 } else {
-                    reply["status"] = "FAILED";
-                    sock.send(zmq::buffer(reply.dump()), zmq::send_flags::none);
+                    reply_proto.set_status(usrp_proto::FAILED);
+                    reply_proto.set_msg("Configuration validation failed");
+                    string serialized_reply;
+                    reply_proto.SerializeToString(&serialized_reply);
+                    sock.send(zmq::buffer(serialized_reply), zmq::send_flags::none);
                     continue;
                 }
 
@@ -140,19 +179,34 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
                     std::copy(rx_buffs[i].begin(), rx_buffs[i].end(), rx_ptr + i * rx_samps_per_ch);
                 }
 
-                reply["status"] = "SUCCESS";
-                reply["rx_shm_name"] = rx_shm_name;
-                reply["rx_nsamps_per_ch"] = rx_samps_per_ch;
-                reply["num_rx_ch"] = num_rx_ch;
-            } else if (cmd == "RELEASE") {
+                // 设置 Protobuf 响应
+                reply_proto.set_status(usrp_proto::SUCCESS);
+                reply_proto.set_rx_shm_name(rx_shm_name);
+                reply_proto.set_rx_nsamps_per_ch(rx_samps_per_ch);
+                reply_proto.set_num_rx_ch(num_rx_ch);
+
+            } else if (req_proto.cmd() == usrp_proto::RELEASE) {
                 bip::shared_memory_object::remove("usrp_rx_shm");
-                reply["status"] = "RELEASED";
+                reply_proto.set_status(usrp_proto::RELEASED);
+            } else {
+                reply_proto.set_status(usrp_proto::ERROR);
+                reply_proto.set_msg("Unknown command");
             }
         } catch (const std::exception &e) {
-            reply["status"] = "ERROR";
-            reply["msg"] = e.what();
+            reply_proto.set_status(usrp_proto::ERROR);
+            reply_proto.set_msg(e.what());
+            UHD_LOG_ERROR("SERVER", std::format("Exception: {}", e.what()));
         }
-        sock.send(zmq::buffer(reply.dump()), zmq::send_flags::none);
+        string serialized_reply;
+        if (!reply_proto.SerializeToString(&serialized_reply)) {
+            UHD_LOG_ERROR("SERVER", "Failed to serialize reply");
+        }
+        sock.send(zmq::buffer(serialized_reply), zmq::send_flags::none);
     }
+
+    // 清理 Protobuf 库资源 (可选，用于内存泄漏检测等)
+    google::protobuf::ShutdownProtobufLibrary();
+    UHD_LOG_INFO("SERVER", "Server shutting down gracefully.");
+
     return EXIT_SUCCESS;
 }

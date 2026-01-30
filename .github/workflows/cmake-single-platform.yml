@@ -22,7 +22,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install Dependencys
-      run: sudo add-apt-repository ppa:ettusresearch/uhd && sudo apt-get update && sudo apt-get install -y libuhd-dev uhd-host libzmq3-dev libboost-all-dev nlohmann-json3-dev
+      run: sudo add-apt-repository ppa:ettusresearch/uhd && sudo apt-get update && sudo apt-get install -y libuhd-dev uhd-host libzmq3-dev libboost-all-dev libprotobuf-dev
     - name: Set up GCC
       uses: egor-tensin/setup-gcc@v2
       with:
