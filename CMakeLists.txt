@@ -45,12 +45,16 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
 find_package(Protobuf REQUIRED)
+set(PROTO_SRC usrp_protocol.proto)
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_SRC})
+
+
 # Find Boost Interprocess library
 find_package(Boost REQUIRED COMPONENTS thread)
 
 ### Make the executable #######################################################
 add_executable(txrx_sync txrx_sync.cpp utils.cpp usrp_transceiver.cpp)
-add_executable(txrx_server utils.cpp usrp_transceiver.cpp server.cpp usrp_protocol.pb.cc)
+add_executable(txrx_server utils.cpp usrp_transceiver.cpp server.cpp ${PROTO_SRCS})
 
 target_include_directories(txrx_server
         PRIVATE
@@ -58,6 +62,7 @@ target_include_directories(txrx_server
         ${ZMQ_INCLUDE_DIRS}
         ${UHD_INCLUDE_DIRS}
         ${Protobuf_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 set(CMAKE_BUILD_TYPE "Release")
