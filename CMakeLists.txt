@@ -54,7 +54,7 @@ find_package(Boost REQUIRED COMPONENTS thread)
 
 ### Make the executable #######################################################
 add_executable(txrx_sync txrx_sync.cpp utils.cpp usrp_transceiver.cpp)
-add_executable(txrx_server utils.cpp usrp_transceiver.cpp server.cpp ${PROTO_SRCS})
+add_executable(txrx_server usrp_transceiver.cpp server.cpp ${PROTO_SRCS})
 
 target_include_directories(txrx_server
         PRIVATE
