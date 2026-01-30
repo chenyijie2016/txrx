@@ -40,10 +40,10 @@ set(UHD_BOOST_REQUIRED_COMPONENTS
         program_options
 )
 include(UHDBoost)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZMQ REQUIRED libzmq)
 
-find_package(nlohmann_json REQUIRED)
 find_package(Protobuf REQUIRED)
 # Find Boost Interprocess library
 find_package(Boost REQUIRED COMPONENTS thread)
@@ -57,6 +57,7 @@ target_include_directories(txrx_server
         ${Boost_INCLUDE_DIRS}
         ${ZMQ_INCLUDE_DIRS}
         ${UHD_INCLUDE_DIRS}
+        ${Protobuf_INCLUDE_DIRS}
 )
 
 set(CMAKE_BUILD_TYPE "Release")
@@ -85,7 +86,6 @@ if (NOT UHD_USE_STATIC_LIBS)
             PRIVATE
             ${UHD_LIBRARIES}
             Boost::program_options
-            nlohmann_json::nlohmann_json
             ${Protobuf_LIBRARIES}
             ${ZMQ_LIBRARIES}
             ${Boost_LIBRARIES}
