@@ -12,7 +12,8 @@ struct UsrpConfig {
     std::vector<size_t> tx_channels, rx_channels;
     size_t spb; // Samples per buffer
     double delay;
-    size_t nsamps{0};
+    size_t rx_samps{0};
+    size_t tx_samps{0};
     std::vector<double> tx_rates, rx_rates;
     std::vector<std::string> tx_files, rx_files;
     std::vector<double> tx_freqs, rx_freqs;

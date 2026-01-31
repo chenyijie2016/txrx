@@ -38,8 +38,11 @@ include(UHDMinDepVersions)
 # Set components here, then include UHDBoost to do the actual finding
 set(UHD_BOOST_REQUIRED_COMPONENTS
         program_options
+        thread
 )
 include(UHDBoost)
+
+message("Linked Boost_LIBRARIES is: ${Boost_LIBRARIES}")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZMQ REQUIRED libzmq)
@@ -50,7 +53,7 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_SRC})
 
 
 # Find Boost Interprocess library
-find_package(Boost REQUIRED COMPONENTS thread)
+# find_package(Boost REQUIRED COMPONENTS thread)
 
 ### Make the executable #######################################################
 add_executable(txrx_sync txrx_sync.cpp utils.cpp usrp_transceiver.cpp)
@@ -84,13 +87,12 @@ if (NOT UHD_USE_STATIC_LIBS)
     target_link_libraries(txrx_sync
             PRIVATE
             ${UHD_LIBRARIES}
-            Boost::program_options
+            ${Boost_LIBRARIES}
     )
 
     target_link_libraries(txrx_server
             PRIVATE
             ${UHD_LIBRARIES}
-            Boost::program_options
             ${Protobuf_LIBRARIES}
             ${ZMQ_LIBRARIES}
             ${Boost_LIBRARIES}

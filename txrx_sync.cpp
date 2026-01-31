@@ -69,7 +69,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
     //("rx-bw", po::value<double>(&config.rx_bw),
     //                      "RX Bandwidth (Hz)")("tx-bw", po::value<double>(&config.tx_bw), "TX Bandwidth (Hz)");
     option("delay", po::value<double>(&config.delay)->default_value(1), "Delay before start (seconds)");
-    option("nsamps", po::value<size_t>(&config.nsamps)->default_value(5e6), "Number of samples to receive, 0 means until TX complete");
+    option("rx_samps", po::value<size_t>(&config.rx_samps)->default_value(5e6), "Number of samples to receive");
     option("clock-source", po::value<string>(&config.clock_source)->default_value("internal"), "Reference: internal, external, gpsdo");
     option("time-source", po::value<string>(&config.time_source)->default_value("internal"), "Time Source");
 

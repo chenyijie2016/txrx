@@ -4,54 +4,56 @@ package usrp_proto;
 
 // 对应 C++ 中的 UsrpConfig 结构体
 message UsrpConfig {
-    string clock_source = 1;
-    string time_source = 2;
-    repeated uint32 tx_channels = 3;
-    repeated uint32 rx_channels = 4;
-    uint64 spb = 5;         // size_t -> uint64
-    double delay = 6;
-    uint64 nsamps = 7;      // size_t -> uint64
-    repeated double tx_rates = 8;
-    repeated double rx_rates = 9;
-    repeated double tx_freqs = 10;
-    repeated double rx_freqs = 11;
-    repeated double tx_gains = 12;
-    repeated double rx_gains = 13;
-    repeated string tx_ants = 14;
-    repeated string rx_ants = 15;
+  string          clock_source = 1;
+  string          time_source  = 2;
+  uint64          spb          = 3; // size_t -> uint64
+  double          delay        = 4;
+  uint64          rx_samps     = 5; // size_t -> uint64
+  uint64          tx_samps     = 6;
+  repeated uint32 tx_channels  = 7;
+  repeated uint32 rx_channels  = 8;
+
+  repeated double tx_rates = 9;
+  repeated double rx_rates = 10;
+  repeated double tx_freqs = 11;
+  repeated double rx_freqs = 12;
+  repeated double tx_gains = 13;
+  repeated double rx_gains = 14;
+  repeated string tx_ants  = 15;
+  repeated string rx_ants  = 16;
     // files 字段在 server.cpp 逻辑中似乎没用到（通过共享内存传数据），保留以防万一
-    repeated string tx_files = 16; 
-    repeated string rx_files = 17;
+  repeated string tx_files = 17;
+  repeated string rx_files = 18;
 }
 
 // 命令类型枚举
 enum CommandType {
-    UNKNOWN = 0;
-    EXECUTE = 1;
-    RELEASE = 2;
+  UNKNOWN = 0;
+  EXECUTE = 1;
+  RELEASE = 2;
 }
 
 // 请求消息
 message Request {
-    CommandType cmd = 1;
-    string tx_shm_name = 2;
-    UsrpConfig config = 3;
+  CommandType cmd         = 1;
+  string      tx_shm_name = 2;
+  UsrpConfig  config      = 3;
 }
 
 // 状态枚举
 enum Status {
-    STATUS_UNKNOWN = 0;
-    SUCCESS = 1;
-    FAILED = 2;
-    ERROR = 3;
-    RELEASED = 4;
+  STATUS_UNKNOWN = 0;
+  SUCCESS        = 1;
+  FAILED         = 2;
+  ERROR          = 3;
+  RELEASED       = 4;
 }
 
 // 响应消息
 message Response {
-    Status status = 1;
-    string msg = 2;              // 错误信息
-    string rx_shm_name = 3;
-    uint64 rx_nsamps_per_ch = 4;
-    uint32 num_rx_ch = 5;
+  Status status           = 1;
+  string msg              = 2; // 错误信息
+  string rx_shm_name      = 3;
+  uint64 rx_nsamps_per_ch = 4;
+  uint32 num_rx_ch        = 5;
 }
