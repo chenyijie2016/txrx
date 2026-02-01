@@ -119,7 +119,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
     }
     // for (int i = 0; i < 2; i++)
     {
-        transceiver.ApplyConfiguration(config);
+        transceiver.ApplyConfiguration(config, stop_signal_called);
         // Start transmission thread
         auto TxBuffer = LoadFileToBuffer(config);
 

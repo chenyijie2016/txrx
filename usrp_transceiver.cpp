@@ -92,7 +92,7 @@ bool UsrpTransceiver::ValidateConfiguration(const UsrpConfig &config, const bool
     return true;
 }
 
-void UsrpTransceiver::ApplyConfiguration(const UsrpConfig &config) {
+void UsrpTransceiver::ApplyConfiguration(const UsrpConfig &config, std::atomic<bool> &stop_signal) {
     UHD_LOG_INFO("CONFIG", format("====== Configuring Tx ======"))
     // Configure TX channels
     for (auto index = 0; index < config.tx_channels.size(); ++index) {
@@ -138,15 +138,19 @@ void UsrpTransceiver::ApplyConfiguration(const UsrpConfig &config) {
     UHD_LOG_INFO("CONFIG", format("============================"))
 
     if (not(this->usrp_config.clock_source == config.clock_source and this->usrp_config.time_source == config.time_source)) {
-        ApplyTimeSync(config);
+        ApplyTimeSync(config, stop_signal);
     }
 
     if (not(this->usrp_config.tx_freqs == config.tx_freqs and this->usrp_config.rx_freqs == config.rx_freqs)) {
         ApplyTuneRequest(config);
     }
     this->usrp_config = config;
+}
 
-    start_time = usrp->get_time_now() + uhd::time_spec_t(config.delay);
+void UsrpTransceiver::CalculateTransmissionTime() {
+    auto now = usrp->get_time_now();
+    start_time = now + uhd::time_spec_t(this->usrp_config.delay);
+    UHD_LOG_INFO("SYSTEM", std::format("Current time: {:.3f} s", now.get_real_secs()));
     UHD_LOG_INFO("SYSTEM", std::format("Start time: {:.3f} s", start_time.get_real_secs()));
 }
 
@@ -221,7 +225,7 @@ void UsrpTransceiver::ApplyTuneRequest(const UsrpConfig &config) {
     }
 }
 
-void UsrpTransceiver::ApplyTimeSync(const UsrpConfig &config) {
+void UsrpTransceiver::ApplyTimeSync(const UsrpConfig &config, std::atomic<bool> &stop_signal) {
     // Configure clock reference
     UHD_LOG_INFO("CONFIG", format("Setting clock reference to: {}", config.clock_source));
     usrp->set_clock_source(config.clock_source);
@@ -236,15 +240,15 @@ void UsrpTransceiver::ApplyTimeSync(const UsrpConfig &config) {
 
     // Wait for PPS sync and set time
     UHD_LOG_INFO("CONFIG", "Waiting for PPS sync and setting time...");
-    // usrp->set_time_unknown_pps(uhd::time_spec_t(0.0));
+    usrp->set_time_unknown_pps(uhd::time_spec_t(0.0));
 
-    const uhd::time_spec_t last_pps_time = usrp->get_time_last_pps();
-    while (last_pps_time == usrp->get_time_last_pps()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    // This command will be processed fairly soon after the last PPS edge:
-    usrp->set_time_next_pps(uhd::time_spec_t(0.0));
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    // const uhd::time_spec_t last_pps_time = usrp->get_time_last_pps();
+    // while (last_pps_time == usrp->get_time_last_pps() && not stop_signal.load(std::memory_order_acquire)) {
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // }
+    // // This command will be processed fairly soon after the last PPS edge:
+    // usrp->set_time_next_pps(uhd::time_spec_t(0.0));
+    // std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     // Display current USRP time
     UHD_LOG_INFO("CONFIG", std::format("Current USRP time: {:.6f} seconds", usrp->get_time_now().get_real_secs()));
 }
@@ -277,6 +281,8 @@ void UsrpTransceiver::TransmitFromBuffer(std::vector<std::vector<complexf>> &buf
     size_t total_samples = buffs.empty() ? 0 : buffs[0].size(); // Total samples to transmit
 
     UHD_LOG_INFO("TX-BUFFER", format("Starting transmission from buffer with {} samples per channel", total_samples))
+    UHD_LOG_DEBUG("TX-BUFFER", format("Transmit start time: {:.3f} seconds", start_time.get_real_secs()))
+    UHD_LOG_DEBUG("TX-BUFFER", format("Current time: {:.3f} seconds", usrp->get_time_now().get_real_secs()))
 
     while (!stop_signal.load(std::memory_order_acquire) && current_sample_idx < total_samples) {
         /* ---------- Send samples from buffer ---------- */
@@ -329,7 +335,7 @@ std::vector<std::vector<complexf>> UsrpTransceiver::ReceiveToBuffer(std::atomic<
 
     UHD_LOG_INFO("RX-BUFFER", format("Starting reception, will receive {} samples", usrp_config.rx_samps))
     UHD_LOG_DEBUG("RX-BUFFER", format("Reception start time: {:.3f} seconds", start_time.get_real_secs()))
-
+    UHD_LOG_DEBUG("RX-BUFFER", format("Current time: {:.3f} seconds", usrp->get_time_now().get_real_secs()))
     // Issue stream command to start reception
     rx_stream->issue_stream_cmd(stream_cmd);
 

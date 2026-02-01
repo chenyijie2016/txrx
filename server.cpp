@@ -6,16 +6,16 @@
 #include <zmq.hpp>
 
 // POSIX headers for Shared Memory
-#include <sys/mman.h>
 #include <fcntl.h>
-#include <unistd.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
+#include <boost/program_options.hpp>
 #include <uhd/convert.hpp>
 #include <uhd/exception.hpp>
 #include <uhd/usrp/multi_usrp.hpp>
 #include <uhd/utils/safe_main.hpp>
-#include <boost/program_options.hpp>
 
 #include "usrp_protocol.pb.h"
 #include "usrp_transceiver.h"
@@ -52,10 +52,8 @@ UsrpConfig ConvertConfig(const usrp_proto::UsrpConfig &proto_cfg) {
     c.rx_ants.assign(proto_cfg.rx_ants().begin(), proto_cfg.rx_ants().end());
 
 
-    UHD_LOG_DEBUG("CONFIG", std::format(
-        "Converted Config - Clock: {}, Time: {}, SPB: {}, Delay: {}, RX Samps: {}, TX Samps: {}",
-        c.clock_source, c.time_source, c.spb, c.delay, c.rx_samps, c.tx_samps
-    ));
+    UHD_LOG_DEBUG("CONFIG", std::format("Converted Config - Clock: {}, Time: {}, SPB: {}, Delay: {}, RX Samps: {}, TX Samps: {}", c.clock_source, c.time_source,
+                                        c.spb, c.delay, c.rx_samps, c.tx_samps));
 
     return c;
 }
@@ -67,10 +65,8 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
     uint16_t port;
 
     po::options_description desc("Command line options");
-    desc.add_options()
-        ("help,h", "Show help")
-        ("port", po::value<uint16_t>(&port)->default_value(5555))
-        ("args", po::value<string>(&args)->default_value("addr=192.168.10.101"));
+    desc.add_options()("help,h", "Show help")("port", po::value<uint16_t>(&port)->default_value(5555))(
+            "args", po::value<string>(&args)->default_value("addr=192.168.10.101"));
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -107,17 +103,18 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
                 if (!transceiver.ValidateConfiguration(config, false)) {
                     throw std::runtime_error("Configuration validation failed");
                 }
-                transceiver.ApplyConfiguration(config);
+                transceiver.ApplyConfiguration(config, stop_signal_called);
 
                 // --- 1. 使用 POSIX 接口打开 TX 共享内存 ---
                 UHD_LOG_INFO("SERVER", std::format("Opening TX SHM: {}", tx_shm_name));
                 int tx_fd = shm_open(tx_shm_name.c_str(), O_RDONLY, 0666);
-                if (tx_fd == -1) throw std::runtime_error(std::format("shm_open TX failed: {}", strerror(errno)));
+                if (tx_fd == -1)
+                    throw std::runtime_error(std::format("shm_open TX failed: {}", strerror(errno)));
 
                 struct stat tx_st;
                 fstat(tx_fd, &tx_st);
-                
-                void* tx_ptr = mmap(nullptr, tx_st.st_size, PROT_READ, MAP_SHARED, tx_fd, 0);
+
+                void *tx_ptr = mmap(nullptr, tx_st.st_size, PROT_READ, MAP_SHARED, tx_fd, 0);
                 if (tx_ptr == MAP_FAILED) {
                     close(tx_fd);
                     throw std::runtime_error("mmap TX failed");
@@ -138,7 +135,10 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
                 close(tx_fd);
 
                 // --- 2. 执行收发 ---
-                auto tx_thread = std::async(std::launch::async, &UsrpTransceiver::TransmitFromBuffer, &transceiver, std::ref(tx_buffs), std::ref(stop_signal_called));
+
+                transceiver.CalculateTransmissionTime(); // 计算收发流的传输开始时间
+                auto tx_thread =
+                        std::async(std::launch::async, &UsrpTransceiver::TransmitFromBuffer, &transceiver, std::ref(tx_buffs), std::ref(stop_signal_called));
                 auto rx_future = std::async(std::launch::async, &UsrpTransceiver::ReceiveToBuffer, &transceiver, std::ref(stop_signal_called));
 
                 tx_thread.wait();
@@ -153,12 +153,13 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
                 size_t total_rx_bytes = num_rx_ch * rx_samps_per_ch * sizeof(complexf);
 
                 int rx_fd = shm_open(rx_shm_name.c_str(), O_CREAT | O_RDWR, 0666);
-                if (rx_fd == -1) throw std::runtime_error("shm_open RX failed");
+                if (rx_fd == -1)
+                    throw std::runtime_error("shm_open RX failed");
                 ftruncate(rx_fd, total_rx_bytes);
 
-                void* rx_ptr = mmap(nullptr, total_rx_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, rx_fd, 0);
+                void *rx_ptr = mmap(nullptr, total_rx_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, rx_fd, 0);
                 complexf *raw_rx_ptr = static_cast<complexf *>(rx_ptr);
-                
+
                 for (size_t i = 0; i < num_rx_ch; ++i) {
                     std::copy(rx_buffs[i].begin(), rx_buffs[i].end(), raw_rx_ptr + i * rx_samps_per_ch);
                 }
