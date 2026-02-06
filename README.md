@@ -77,47 +77,106 @@ A Python client can communicate with the server using ZeroMQ and shared memory:
 ```python
 import zmq
 import numpy as np
-from multiprocessing import shared_memory
+import matplotlib.pyplot as plt
+import posix_ipc
+import mmap
+from usrp_config import UsrpConfig
+import usrp_protocol_pb2 as pb
+TX_SHM_NAME = "/usrp_tx_shm"
 
-# Connect to the server
-context = zmq.Context()
-socket = context.socket(zmq.REQ)
-socket.connect("tcp://localhost:5555")
+def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
+    shm_tx = None
+    mm_tx = None
 
-# Prepare configuration
-config = {
-    "clock_source": "internal",
-    "time_source": "internal",
-    "spb": 2500,
-    "delay": 1.0,
-    "rx_samps": 5000000,
-    "tx_samps": 5000000,
-    "tx_channels": [0],
-    "rx_channels": [1],
-    "tx_rates": [1e6],
-    "rx_rates": [1e6],
-    "tx_freqs": [915e6],
-    "rx_freqs": [915e6],
-    "tx_gains": [10.0],
-    "rx_gains": [10.0],
-    "tx_ants": ["TX/RX"],
-    "rx_ants": ["RX2"]
-}
+    try:
+        posix_ipc.unlink_shared_memory(TX_SHM_NAME)
+    except posix_ipc.ExistentialError:
+        pass
+    
+    try:
+        shm_tx = posix_ipc.SharedMemory(TX_SHM_NAME, flags=posix_ipc.O_CREX, size=tx_buffer.nbytes)
+        mm_tx = mmap.mmap(shm_tx.fd, tx_buffer.nbytes)
+        mm_tx.write(tx_buffer.tobytes())
 
-# Create TX data in shared memory
-tx_data = np.exp(1j * 2 * np.pi * np.arange(5000000) * 0.1).astype(np.complex64)
-tx_data_bytes = tx_data.tobytes()
-shm = shared_memory.SharedMemory(create=True, size=len(tx_data_bytes), name="/usrp_tx_shm")
-shm.buf[:len(tx_data_bytes)] = tx_data_bytes
+        ctx = zmq.Context()
+        sock = ctx.socket(zmq.REQ)
+        sock.connect("tcp://localhost:5555")
 
-# Send EXECUTE command using Protocol Buffers
-# (Actual implementation would serialize the protobuf message)
+        request = pb.Request()
+        request.cmd = pb.EXECUTE
+        request.tx_shm_name = TX_SHM_NAME
 
-# Cleanup
-shm.close()
-shm.unlink()
-socket.close()
-context.term()
+        c = request.config
+        c.clock_source = str(usrp_config.clock_source)
+        c.time_source = str(usrp_config.time_source)
+        c.spb = int(usrp_config.spb)
+        c.delay = float(usrp_config.delay)
+        c.rx_samps = int(usrp_config.rx_samps)
+        c.tx_samps = len(tx_buffer) // len(usrp_config.tx_channels)  # 发射总样本数
+        # 显式转换类型
+        c.tx_channels.extend([int(x) for x in usrp_config.tx_channels])
+        c.rx_channels.extend([int(x) for x in usrp_config.rx_channels])
+        c.tx_rates.extend([float(x) for x in usrp_config.tx_rates])
+        c.rx_rates.extend([float(x) for x in usrp_config.rx_rates])
+        c.tx_freqs.extend([float(x) for x in usrp_config.tx_freqs])
+        c.rx_freqs.extend([float(x) for x in usrp_config.rx_freqs])
+        c.tx_gains.extend([float(x) for x in usrp_config.tx_gains])
+        c.rx_gains.extend([float(x) for x in usrp_config.rx_gains])
+        c.tx_ants.extend([str(x) for x in usrp_config.tx_ants])
+        c.rx_ants.extend([str(x) for x in usrp_config.rx_ants])
+        
+        print("Sending Protobuf Tx request...")
+        # 发送二进制序列化数据
+        sock.send(request.SerializeToString())
+
+        # --- 3. 处理 RX 数据 ---
+        raw_res = sock.recv()
+        response = pb.Response()
+        response.ParseFromString(raw_res) # 解析二进制响应
+
+        mm_tx.close()
+        shm_tx.close_fd()
+        posix_ipc.unlink_shared_memory(TX_SHM_NAME)
+
+        if response.status == pb.SUCCESS:
+            n_ch = response.num_rx_ch
+            n_samps = response.rx_nsamps_per_ch
+            rx_name = response.rx_shm_name # C++ 也应该返回带 / 的名字
+            
+            # 映射 RX 内存
+            shm_rx = posix_ipc.SharedMemory(rx_name)
+
+            # 计算总字节数
+            total_rx_bytes = n_ch * n_samps * np.dtype(np.complex64).itemsize
+            with mmap.mmap(shm_rx.fd, total_rx_bytes, prot=mmap.PROT_READ) as mm_rx:
+                # 从内存流构造 numpy 数组并深拷贝
+                rx_data = np.frombuffer(mm_rx, dtype=np.complex64).copy()
+                rx_data = rx_data.reshape(n_ch, n_samps)
+            
+
+            print(f"Received {n_ch} channels, {n_samps} samples each.")
+
+            # 告知 C++ 释放内存
+            release_req = pb.Request()
+            release_req.cmd = pb.RELEASE
+            sock.send(release_req.SerializeToString())
+
+            # 接收确认
+            raw_release_res = sock.recv()
+            release_res = pb.Response()
+            release_res.ParseFromString(raw_release_res)
+
+            shm_rx.close_fd()
+
+            return rx_data
+        else:
+            print(f"Error: {response.msg}")
+            return None
+    except Exception as e:
+        print(f"IPC Error: {e}")
+        if mm_tx: mm_tx.close()
+        if shm_tx: shm_tx.close_fd()
+        return None
 ```
 
 ### Command Line Options
