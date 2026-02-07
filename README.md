@@ -1,76 +1,116 @@
-# UHD Test Project - SDR Application for USRP Devices
+# txrx - UHD synchronized TX/RX samples
 
 ## Overview
 
-This project implements a Software Defined Radio (SDR) application that enables synchronized transmission and reception of samples using USRP hardware through the UHD (USRP Hardware Driver) library. The application supports simultaneous TX/RX operations with configurable parameters for frequency, gain, sample rate, and channel selection. It includes both a command-line application and an IPC server for remote control.
+txrx is a C++23 Software Defined Radio (SDR) application that performs synchronized transmission and reception of complex samples using USRP hardware via the UHD (USRP Hardware Driver) library. It provides both a command-line utility and an IPC server for remote control, enabling multi-channel configurations with configurable rates, gains, and frequencies.
 
 ## Features
 
 - Synchronized transmission and reception
-- Multi-channel support
+- Multi-channel support with per-channel configuration
 - File-based sample input/output (fc32 format)
-- Configurable parameters (frequency, gain, sample rate, etc.)
 - Real-time LO lock checking
 - Clock synchronization with PPS
 - Reference clock support (internal, external, GPSDO)
 - Graceful shutdown handling with signal processing
-- UsrpTransceiver class for encapsulated USRP operations
-- IPC server using ZeroMQ and shared memory for remote control
-- Protocol Buffers for message serialization
+- IPC server using ZeroMQ, shared memory, and Protocol Buffers
 
-## Project Structure
+## Repository layout
 
-### Core Components
-
-- `txrx_sync.cpp` - Main application implementing synchronized TX/RX functionality with file I/O
-- `server.cpp` - IPC server for remote control via Python clients using ZeroMQ and shared memory
-- `usrp_transceiver.cpp` / `usrp_transceiver.h` - USRP device management and configuration handling
-- `utils.cpp` / `utils.h` - Utility functions for file I/O operations
+- `txrx_sync.cpp` - Command-line application for synchronized TX/RX with file I/O
+- `server.cpp` - IPC server for remote control using ZeroMQ and shared memory
+- `usrp_transceiver.cpp` / `usrp_transceiver.h` - USRP device management and configuration
+- `utils.cpp` / `utils.h` - Utility functions for file I/O
 - `usrp_protocol.proto` - Protocol Buffers definition for IPC communication
-- `net.sh` - System network buffer configuration script
+- `net.sh` - Network buffer configuration helper
 - `CMakeLists.txt` - Build configuration
 
-## Dependencies
+## Requirements
 
 - UHD (USRP Hardware Driver) 4.9.0 or later
-- Boost libraries (program_options, thread)
-- ZeroMQ (libzmq) for IPC communication
-- Protocol Buffers for message serialization
-- C++23 compiler or later
+- C++23 compiler (GCC 12+, Clang 15+, or Apple Clang with C++23 support)
+- CMake 3.12 or later
+- Boost libraries: `program_options`, `thread`
+- ZeroMQ (`libzmq`)
+- Protocol Buffers compiler and libraries
 - USRP hardware device (e.g., X310, B210)
 
-## Building
+## Build
+
+Once dependencies are installed, the standard build flow is:
 
 ```bash
-mkdir build
-cd build
-cmake ..
-make
+cmake -S . -B build
+cmake --build build
 ```
 
-This creates two executables:
+This produces two executables:
+
 - `txrx_sync` - Command-line application for direct USRP control
 - `txrx_server` - IPC server for remote control via Python clients
 
+### Apple Silicon (macOS arm64)
+
+1. Install command line tools:
+
+   ```bash
+   xcode-select --install
+   ```
+
+2. Install dependencies with Homebrew:
+
+   ```bash
+   brew install cmake uhd boost zmq protobuf pkg-config
+   ```
+
+3. Configure and build:
+
+   ```bash
+   cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+   cmake --build build
+   ```
+
+If CMake cannot locate UHD, set `UHD_DIR` or expand `CMAKE_PREFIX_PATH` to the UHD install prefix (for example, `-DCMAKE_PREFIX_PATH="$(brew --prefix uhd)"`).
+
+### Ubuntu (Linux)
+
+1. Install dependencies:
+
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y build-essential cmake pkg-config \
+     libuhd-dev libboost-program-options-dev libboost-thread-dev \
+     libzmq3-dev protobuf-compiler libprotobuf-dev
+   ```
+
+2. Configure and build:
+
+   ```bash
+   cmake -S . -B build
+   cmake --build build
+   ```
+
+If your distribution ships an older UHD version, install UHD 4.9+ from Ettus Research packages and rerun CMake with `-DUHD_DIR=/path/to/UHDConfig.cmake`.
+
 ## Usage
 
-### Basic Command-Line Usage
+### Basic command-line usage
 
 ```bash
 ./txrx_sync --tx-files tx_data.fc32 --rx-files rx_data.fc32 --freq 915e6 --rate 1e6
 ```
 
-### IPC Server Usage
+### IPC server usage
 
-The project includes an IPC server that allows remote control of USRP operations via Python clients:
+The IPC server allows remote control of USRP operations via Python clients.
 
-#### Starting the IPC Server
+#### Starting the IPC server
 
 ```bash
 ./txrx_server --args "addr=192.168.180.2" --port 5555
 ```
 
-#### Python Client Example
+#### Python client example
 
 A Python client can communicate with the server using ZeroMQ and shared memory:
 
@@ -92,7 +132,7 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
         posix_ipc.unlink_shared_memory(TX_SHM_NAME)
     except posix_ipc.ExistentialError:
         pass
-    
+
     try:
         shm_tx = posix_ipc.SharedMemory(TX_SHM_NAME, flags=posix_ipc.O_CREX, size=tx_buffer.nbytes)
         mm_tx = mmap.mmap(shm_tx.fd, tx_buffer.nbytes)
@@ -124,7 +164,7 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
         c.rx_gains.extend([float(x) for x in usrp_config.rx_gains])
         c.tx_ants.extend([str(x) for x in usrp_config.tx_ants])
         c.rx_ants.extend([str(x) for x in usrp_config.rx_ants])
-        
+
         print("Sending Protobuf Tx request...")
         # 发送二进制序列化数据
         sock.send(request.SerializeToString())
@@ -142,7 +182,7 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
             n_ch = response.num_rx_ch
             n_samps = response.rx_nsamps_per_ch
             rx_name = response.rx_shm_name # C++ 也应该返回带 / 的名字
-            
+
             # 映射 RX 内存
             shm_rx = posix_ipc.SharedMemory(rx_name)
 
@@ -152,7 +192,6 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
                 # 从内存流构造 numpy 数组并深拷贝
                 rx_data = np.frombuffer(mm_rx, dtype=np.complex64).copy()
                 rx_data = rx_data.reshape(n_ch, n_samps)
-            
 
             print(f"Received {n_ch} channels, {n_samps} samples each.")
 
@@ -179,7 +218,7 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
         return None
 ```
 
-### Command Line Options
+### Command line options
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -193,11 +232,11 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
 | `--rx-channels` | RX channels (space separated) | `1` |
 | `--spb` | Samples per buffer | `2500` |
 | `--rate` | Sample rate (Hz) for both TX and RX | N/A (sets both tx/rx rates if specified) |
-| `--tx-rates` | TX Sample rates (Hz) (one per channel) | `1e6` |
-| `--rx-rates` | RX Sample rates (Hz) (one per channel) | `1e6` |
-| `--freq` | Center frequency (Hz) for ALL Tx and Rx CHANNELS | N/A (sets both tx/rx freqs if specified) |
-| `--tx-freqs` | TX Center frequencies (Hz) (one per channel) | `915e6` |
-| `--rx-freqs` | RX Center frequencies (Hz) (one per channel) | `915e6` |
+| `--tx-rates` | TX sample rates (Hz) (one per channel) | `1e6` |
+| `--rx-rates` | RX sample rates (Hz) (one per channel) | `1e6` |
+| `--freq` | Center frequency (Hz) for all TX and RX channels | N/A (sets both tx/rx freqs if specified) |
+| `--tx-freqs` | TX center frequencies (Hz) (one per channel) | `915e6` |
+| `--rx-freqs` | RX center frequencies (Hz) (one per channel) | `915e6` |
 | `--tx-gains` | TX gains (dB) (one per channel) | `10.0` |
 | `--rx-gains` | RX gains (dB) (one per channel) | `10.0` |
 | `--delay` | Delay before start (seconds) | `1` |
@@ -205,28 +244,28 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
 | `--clock-source` | Reference: internal, external, gpsdo | `"internal"` |
 | `--time-source` | Time Source | `"internal"` |
 
-### Example Usage
+### Example usage
 
-#### Basic TX/RX with Files
+#### Basic TX/RX with files
 ```bash
 ./txrx_sync --tx-files tx_data.fc32 --rx-files rx_data.fc32 --freq 915e6 --rate 1e6
 ```
 
-#### Multiple Channels
+#### Multiple channels
 ```bash
 ./txrx_sync --tx-channels 0 1 --rx-channels 0 1 --tx-files tx0.fc32 tx1.fc32 --rx-files rx0.fc32 rx1.fc32 --tx-ants TX/RX TX/RX --rx-ants RX2 RX2 --tx-freqs 915e6 925e6 --rx-freqs 915e6 925e6
 ```
 
-#### Custom Parameters
+#### Custom parameters
 ```bash
 ./txrx_sync --args "addr=192.168.10.2" --tx-freqs 2.4e9 2.5e9 --rx-freqs 2.4e9 2.5e9 --tx-gains 20 25 --rx-gains 15 18 --tx-rates 5e6 5e6 --rx-rates 5e6 5e6 --tx-files tx1.fc32 tx2.fc32 --rx-files rx1.fc32 rx2.fc32
 ```
 
-## File Formats
+## File formats
 
 The application uses complex floating-point (fc32) format for input and output files. Each sample is two 32-bit floats (real and imaginary components), stored in binary format.
 
-## Network Configuration
+## Network configuration
 
 For optimal network performance with USRP devices, run the network buffer configuration script before starting:
 
