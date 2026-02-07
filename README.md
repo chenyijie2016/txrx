@@ -234,7 +234,7 @@ def txrx_ipc(usrp_config: UsrpConfig, tx_buffer: np.ndarray) -> np.ndarray:
 | `--rate` | Sample rate (Hz) for both TX and RX | N/A (sets both tx/rx rates if specified) |
 | `--tx-rates` | TX sample rates (Hz) (one per channel) | `1e6` |
 | `--rx-rates` | RX sample rates (Hz) (one per channel) | `1e6` |
-| `--freq` | Center frequency (Hz) for all TX and RX channels | N/A (sets both tx/rx freqs if specified) |
+| `--freq` | Center frequency (Hz) for all TX and RX channels (sets both tx/rx freqs when provided) | N/A (use `--tx-freqs`/`--rx-freqs`) |
 | `--tx-freqs` | TX center frequencies (Hz) (one per channel) | `915e6` |
 | `--rx-freqs` | RX center frequencies (Hz) (one per channel) | `915e6` |
 | `--tx-gains` | TX gains (dB) (one per channel) | `10.0` |
